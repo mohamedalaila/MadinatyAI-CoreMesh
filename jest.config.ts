@@ -16,6 +16,7 @@ const config: Config = {
     '^@madinatyai/trust-score$': '<rootDir>/libs/trust-score/src/index.ts',
     '^@madinatyai/events$': '<rootDir>/libs/events/src/index.ts',
     '^@madinatyai/tokens$': '<rootDir>/libs/tokens/src/index.ts',
+    '^@madinatyai/business$': '<rootDir>/libs/business/src/index.ts',
   },
   transform: {
     '^.+\\.ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.spec.json' }],

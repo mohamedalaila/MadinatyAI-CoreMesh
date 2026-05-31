@@ -28,7 +28,8 @@
       "@madinatyai/kyc": ["libs/kyc/src/index.ts"],
       "@madinatyai/trust-score": ["libs/trust-score/src/index.ts"],
       "@madinatyai/events": ["libs/events/src/index.ts"],
-      "@madinatyai/tokens": ["libs/tokens/src/index.ts"]
+      "@madinatyai/tokens": ["libs/tokens/src/index.ts"],
+      "@madinatyai/business": ["libs/business/src/index.ts"]
     }
   },
   "exclude": ["node_modules", "tmp", "dist"]

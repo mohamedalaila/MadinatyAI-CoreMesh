@@ -236,21 +236,90 @@ model SouqListing {
   @@schema("tenant_souq")
 }
 
-model KitchenMenuItem {
-  id                String   @id @default(uuid())
+model KitchenBusiness {
+  id              String   @id @default(uuid())
   ownerGlobalUserId String
-  title             String
-  createdAt         DateTime @default(now())
+  slug            String   @unique   // "ali-kitchen" → ali.kitchen.madinatyai.com
+  name            String
+  isActive        Boolean  @default(true)
 
+  // Visual identity (logo, colors, fonts, hero image, custom CSS, social links)
+  branding        Json     @default("{}")
+
+  // Business profile
+  description     String?
+  cuisineType     String?   // "Egyptian", "Asian", etc.
+  address         String?
+  phone           String?
+  openingHours    Json?     // { "mon": "9-22", "tue": "9-22", ... }
+
+  menuItems       KitchenMenuItem[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([ownerGlobalUserId])
+  @@index([isActive])
   @@schema("tenant_kitchen")
 }
 
-model TutorBooking {
-  id                String   @id @default(uuid())
-  ownerGlobalUserId String
-  title             String
-  createdAt         DateTime @default(now())
+model KitchenMenuItem {
+  id          String   @id @default(uuid())
+  businessId  String
+  business    KitchenBusiness @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  price       Float?
+  category    String?    // "Main", "Appetizer", "Drinks"
+  imageUrl    String?
+  isAvailable Boolean  @default(true)
+  createdAt   DateTime @default(now())
 
+  @@index([businessId])
+  @@schema("tenant_kitchen")
+}
+
+model TutorBusiness {
+  id              String   @id @default(uuid())
+  ownerGlobalUserId String
+  slug            String   @unique   // "ahmed-tutor" → ahmed.tutor.madinatyai.com
+  name            String
+  isActive        Boolean  @default(true)
+
+  // Visual identity (logo, colors, fonts, hero image, custom CSS, social links)
+  branding        Json     @default("{}")
+
+  // Business profile
+  description     String?
+  subjects        String[]  // ["Math", "Physics", "Arabic"]
+  qualifications  String?
+  hourlyRate      Float?
+  address         String?
+  phone           String?
+  availability    Json?     // { "mon": ["9-12","14-18"], ... }
+
+  bookings        TutorBooking[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([ownerGlobalUserId])
+  @@index([isActive])
+  @@schema("tenant_tutor")
+}
+
+model TutorBooking {
+  id          String   @id @default(uuid())
+  businessId  String
+  business    TutorBusiness @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  studentId   String   // GlobalUser.id of the student
+  title       String
+  subject     String?
+  scheduledAt DateTime?
+  status      String   @default("PENDING") // PENDING, CONFIRMED, COMPLETED, CANCELLED
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  @@index([businessId])
+  @@index([studentId])
   @@schema("tenant_tutor")
 }
 

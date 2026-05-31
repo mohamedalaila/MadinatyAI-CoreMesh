@@ -8,6 +8,9 @@ export interface TenantContext {
   /** Physical PostgreSQL schema pointer, e.g. "tenant_souq". */
   schemaName: string;
   tierLevel: string;
+  /** Resolved business context (only for kitchen/tutor sub-subdomain requests). */
+  businessId?: string;
+  businessSlug?: string;
 }
 
 /**

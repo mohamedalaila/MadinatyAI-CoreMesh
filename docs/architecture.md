@@ -65,7 +65,8 @@ CoreMesh/
 │   ├── kyc/                        # KYC engine: AES-256-GCM encrypt/decrypt, StorageProvider
 │   ├── trust-score/                # Pure TrustScore calculator + service
 │   ├── events/                     # BullMQ-backed cross-platform event emitter
-│   └── tokens/                     # Closed-loop token wallet + activity pricing
+│   ├── tokens/                     # Closed-loop token wallet + activity pricing
+│   └── business/                   # Sub-tenant business management (Kitchen/Tutor)
 │
 ├── prisma/
 │   └── schema.prisma               # Multi-schema Prisma definition (core + tenant_*)
@@ -88,6 +89,7 @@ All libs are importable via `@madinatyai/<lib>` aliases resolved by `tsc-alias`:
 @madinatyai/trust-score → libs/trust-score/src
 @madinatyai/events      → libs/events/src
 @madinatyai/tokens      → libs/tokens/src
+@madinatyai/business    → libs/business/src
 ```
 
 ---
@@ -114,7 +116,7 @@ All libs are importable via `@madinatyai/<lib>` aliases resolved by `tsc-alias`:
 
 ### 4.3 Per-Tenant Models
 
-Each tenant schema has a minimal placeholder model (`SouqListing`, `KitchenMenuItem`, `TutorBooking`, `TimeBankOffer`) ensuring physical schema isolation. Ecosystem apps extend their own schemas later.
+Each tenant schema has a minimal placeholder model (`SouqListing`, `TimeBankOffer`) or a full business sub-tenant model (`KitchenBusiness` + `KitchenMenuItem`, `TutorBusiness` + `TutorBooking`) ensuring physical schema isolation. Kitchen and Tutor support sub-multi-tenancy where individual businesses get their own visual identity and data scope within the shared tenant schema.
 
 ---
 
@@ -141,6 +143,8 @@ interface TenantContext {
   subdomain: string;
   schemaName: string;  // e.g. "tenant_souq"
   tierLevel: string;
+  businessId?: string;    // Resolved by BusinessMiddleware (kitchen/tutor only)
+  businessSlug?: string;  // e.g. "ali-kitchen"
 }
 ```
 
@@ -231,6 +235,36 @@ Closed-loop credit system. Users pay cash offline; platform admins credit tokens
 - No expiry / no refunds in v1 (extensible later)
 - Cash collection stays outside the system — hub remains a Transparent Broker
 
+### 6.6 Business Sub-Tenancy (`@madinatyai/business`)
+
+Row-level sub-multi-tenancy for Kitchen and Tutor schemas. Each registered business (restaurant, tutor centre) gets its own visual identity, subdomain, and data isolation within the shared tenant schema.
+
+| Model | Schema | Purpose |
+|-------|--------|---------|
+| `KitchenBusiness` | `tenant_kitchen` | Restaurant with branding JSON, cuisine type, opening hours |
+| `KitchenMenuItem` | `tenant_kitchen` | Menu item scoped to a `KitchenBusiness` via `businessId` FK |
+| `TutorBusiness` | `tenant_tutor` | Tutor centre with branding JSON, subjects, hourly rate |
+| `TutorBooking` | `tenant_tutor` | Booking scoped to a `TutorBusiness` via `businessId` FK |
+
+**Key methods:**
+- `createBusiness(tenant, dto)` — register a new business with slug and branding
+- `getBusiness(tenant, slug)` — lookup by slug
+- `listBusinesses(tenant, activeOnly?)` — paginated listing
+- `updateBranding(tenant, businessId, branding)` — update visual identity
+- `updateProfile(tenant, businessId, profile)` — update business info
+- `deactivateBusiness(tenant, businessId)` — soft delete
+
+**Middleware chain:**
+1. `TenantMiddleware` → resolves `kitchen` → `tenant_kitchen` schema
+2. `BusinessMiddleware` → resolves `ali` sub-subdomain or `x-business-slug` header → `businessSlug` in context
+3. `BusinessGuard` → ensures business context is present for business-scoped endpoints
+
+**Design decisions:**
+- Row-level isolation (not schema-per-business) — avoids schema explosion, Prisma-friendly
+- Branding as JSON — flexible, no schema changes for new branding fields
+- Sub-subdomain routing: `ali.kitchen.madinatyai.com` → tenant + businessSlug
+- Only Kitchen & Tutor — Souq is a marketplace, TimeBank is peer-to-peer
+
 ---
 
 ## 7. API Endpoints
@@ -254,6 +288,12 @@ All routes are prefixed with `/api`.
 | GET | `/api/tenant/context` | TenantController | TenantGuard | Current tenant context |
 | POST | `/api/tenant/items` | TenantController | TenantGuard | Create tenant-scoped item |
 | GET | `/api/tenant/items` | TenantController | TenantGuard | List tenant-scoped items |
+| POST | `/api/business` | BusinessController | — | Create business (kitchen/tutor) |
+| GET | `/api/business/:slug` | BusinessController | — | Get business by slug |
+| GET | `/api/business` | BusinessController | — | List businesses |
+| PATCH | `/api/business/:id/branding` | BusinessController | — | Update business branding |
+| PATCH | `/api/business/:id/profile` | BusinessController | — | Update business profile |
+| DELETE | `/api/business/:id` | BusinessController | — | Deactivate business |
 
 ---
 
@@ -289,7 +329,7 @@ Dev mode uses `ts-node-dev --respawn --transpile-only` with `tsconfig-paths/regi
 | `jest.config.ts` | `*.spec.ts` | Unit tests |
 | `jest.e2e.config.ts` | `*.e2e-spec.ts` | End-to-end tests (run in band) |
 
-### 9.2 Unit Test Suites (9 suites, 40 tests)
+### 9.2 Unit Test Suites (12 suites, 59 tests)
 
 | Suite | File | Tests | What's Verified |
 |-------|------|-------|-----------------|
@@ -302,6 +342,9 @@ Dev mode uses `ts-node-dev --respawn --transpile-only` with `tsconfig-paths/regi
 | TenantController | `apps/core-hub/src/modules/tenant/tenant.controller.spec.ts` | 3 | Context retrieval, create item, list items |
 | TokensService | `libs/tokens/src/tokens.service.spec.ts` | 8 | Credit, spend, allocate, insufficient tokens, invalid activity, empty wallet, list pricing, set pricing |
 | TokensController | `apps/core-hub/src/modules/tokens/tokens.controller.spec.ts` | 6 | Credit, spend, allocate, wallet, list pricing, set pricing endpoints |
+| BusinessService | `libs/business/src/business.service.spec.ts` | 10 | Create, duplicate slug, get, not found, list, branding, profile, deactivate, tutor create, tutor list |
+| BusinessController | `apps/core-hub/src/modules/business/business.controller.spec.ts` | 6 | Create, get by slug, list, branding, profile, deactivate |
+| BusinessMiddleware | `libs/business/src/business.middleware.spec.ts` | 3 | Header slug, unsupported tenant, no context |
 
 ### 9.3 E2E Test Suite (1 suite, 5 tests)
 
@@ -313,7 +356,7 @@ Dev mode uses `ts-node-dev --respawn --transpile-only` with `tsconfig-paths/regi
 
 | Check | Command | Result |
 |-------|---------|--------|
-| Unit tests | `npx jest --ci` | **9 suites, 40/40 passed** ✅ |
+| Unit tests | `npx jest --ci` | **12 suites, 59/59 passed** ✅ |
 | E2E tests | `npx jest --config jest.e2e.config.ts --runInBand --ci` | **1 suite, 5/5 passed** ✅ |
 | TypeScript build | `npx tsc -p apps/core-hub/tsconfig.app.json --noEmit` | **0 errors** ✅ |
 | ESLint | `npm run lint` | **0 errors, 0 warnings** ✅ |
@@ -346,3 +389,4 @@ Dev mode uses `ts-node-dev --respawn --transpile-only` with `tsconfig-paths/regi
 6. **StorageProvider interface for KYC** — Local volume for MVP, S3-compatible storage swappable without code changes.
 7. **tsc + tsc-alias over nest build** — Direct TypeScript compilation with alias resolution, avoiding Nest CLI abstraction layer.
 8. **DB-driven token pricing** — `ActivityPricing` table means admins can change costs without a code deploy. Closed-loop credits (not money) keep the Transparent Broker policy intact.
+9. **Row-level business sub-tenancy** — `KitchenBusiness`/`TutorBusiness` with `businessId` FK scoping avoids schema-per-business explosion while giving each business its own visual identity, subdomain, and data isolation.
