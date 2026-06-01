@@ -1,17 +1,33 @@
 # Partner API — Business & Technical Documentation
 
-> **MadinatyAI Ecosystem Hub** — Application-layer API gateway for third-party partner integrations, built inside CoreMesh as a new NestJS library.
-> Version 1.0 · June 2026 · Status: Draft, awaiting implementation.
+> **MadinatyAI Ecosystem Hub** — Partner-facing authentication layer built on top of `@madinatyai/gateway`.
+> Version 1.1 · June 2026 · Status: **DEFERRED (Phase 2+)** — Gateway Core + Logging must ship first; Partner API builds on top of them.
 
 ---
 
 ## 1. Honest Framing — What This Is and Is NOT
 
-**What this is:** A NestJS module + library inside the existing CoreMesh app that adds a **second authentication path** for non-resident, non-tenant-staff API consumers — i.e., third-party developers, partner organizations, and external integrations.
+**What this is:** A NestJS library that adds a **second authentication scheme** (API Key + HMAC) to CoreMesh, plus the admin tooling to issue and manage partner keys. It SITS ON TOP OF `@madinatyai/gateway` — every envelope, error code, rate-limit primitive, audit log, and OpenAPI registration uses the Gateway Core library; Partner API only contributes the partner-specific pieces.
 
-**What this is NOT:** A separate gateway service (Kong, Traefik, AWS API Gateway). Those are network-layer products. The Partner API lives in the same NestJS process as everything else.
+**What this is NOT:** A separate gateway service (Kong, Traefik, AWS API Gateway). Those are network-layer products. **It is also NOT the unified API surface itself** — that's `@madinatyai/gateway`. Partner API is the auth scheme that lets external developers use that surface.
 
-**When you should regret this choice:** When you have ≥ 5 partners each pushing ≥ 1M req/day, OR you need request transformation between API versions, OR compliance requires a documented gateway component. At that point, extract to a dedicated gateway. The Partner API design keeps that migration path open — it's a NestJS layer, not a leaky abstraction across the codebase.
+**When you should regret this choice:** When you have ≥ 5 partners each pushing ≥ 1M req/day, OR you need request transformation between API versions, OR compliance requires a documented gateway component. At that point, extract to a dedicated gateway service. The Partner API design keeps that migration path open — it's a thin layer, not a leaky abstraction.
+
+---
+
+## 1.5 Dependency on Gateway Core (NEW in v1.1)
+
+This document assumes `@madinatyai/gateway` is merged and operating. Specifically, Partner API relies on Gateway Core for:
+
+- **Versioning:** All Partner API routes live under `/api/v1/partner/*` and `/api/v1/admin/partners/*`.
+- **Envelope:** Success + error responses are produced by Gateway Core's `ResponseEnvelopeInterceptor` and `AllExceptionsFilter`.
+- **Error codes:** Use Gateway Core's closed enum. New codes added in this work: `HMAC_INVALID`, `KEY_REVOKED`. Both already pre-registered in Gateway Core.
+- **Rate limiting:** Use Gateway Core's `RateLimitGuard` + `InMemoryRateLimitStrategy` (Redis swap in v2). Partner tier mapping (FREE/STARTER/PRO/ENTERPRISE) is provided via Gateway Core's `tierConfig` overrides.
+- **Idempotency:** Use Gateway Core's `IdempotencyInterceptor` on write endpoints.
+- **Audit logging:** Use Gateway Core's `@AuditAction` decorator on partner / key state changes.
+- **OpenAPI:** Use Gateway Core's Swagger setup — partner endpoints get tagged `@ApiTags('partner')` or `@ApiTags('admin:partners')`.
+
+Partner API does **NOT** reimplement any of the above. If something is missing in Gateway Core, fix it there, not here.
 
 ---
 
@@ -24,7 +40,10 @@
 | Outbound webhooks | Not in v1 — partners poll | Cuts ~3 days of work; revisit when first partner asks |
 | Sandbox environment | Single environment in v1 | Defer until partner volume justifies |
 | Developer portal UI | Admin issues keys via API | Self-serve UI is v2 |
-| Versioning | `/api/partner/*` and `/api/admin/*` — no `/v1/` | Match existing CoreMesh convention |
+| Versioning | `/api/v1/partner/*` and `/api/v1/admin/partners/*` | Aligned with Gateway Core's `/api/v1/` migration |
+| Daily cleanup cron | DROPPED from v1 — table-growth is documented but not an active concern at zero traffic | Re-introduce when usage rows cross 100k OR migrate to Redis (TTL auto-expires) |
+| OpenAPI docs | Inherited from Gateway Core at `/api/v1/docs` | Reverses earlier "skip Swagger" call — Gateway Core makes it free |
+| Cleanup of public-data sample endpoints | DROPPED — `/api/v1/partner/categories` and `/api/v1/partner/safe-meet-spots` removed from this scope | These belong to Souk ElKanto's own opt-in partner-route exposure |
 
 ---
 
@@ -72,7 +91,7 @@ INVITED → ACTIVE → SUSPENDED → REVOKED
 
 - **INVITED** — Partner row exists, no API key issued yet.
 - **ACTIVE** — One or more API keys issued.
-- **SUSPENDED** — All keys frozen; partner can read `/api/partner/me` to see suspension reason.
+- **SUSPENDED** — All keys frozen; partner can read `/api/v1/partner/me` to see suspension reason.
 - **REVOKED** — Partner removed; all keys hard-disabled; can be re-activated by admin.
 
 ---
@@ -82,7 +101,7 @@ INVITED → ACTIVE → SUSPENDED → REVOKED
 ### 4.1 Read requests (HMAC optional)
 
 ```http
-GET /api/partner/listings?district=B5 HTTP/1.1
+GET /api/v1/partner/listings?district=B5 HTTP/1.1
 Host: api.madinatyai.com
 X-Api-Key: mai_live_pk_abc123def456...
 ```
@@ -90,7 +109,7 @@ X-Api-Key: mai_live_pk_abc123def456...
 ### 4.2 Write requests (HMAC required)
 
 ```http
-PATCH /api/partner/me/api-keys/rotate HTTP/1.1
+PATCH /api/v1/partner/me/api-keys/rotate HTTP/1.1
 Host: api.madinatyai.com
 Content-Type: application/json
 X-Api-Key: mai_live_pk_abc123def456...
@@ -107,7 +126,7 @@ X-Api-Signature = HMAC-SHA256(secret, "${timestamp}.${HTTP_METHOD}.${PATH}.${raw
 
 - `timestamp` MUST be within **±300 seconds** of server time (replay window).
 - `rawBody` is the literal body bytes (UTF-8). For empty bodies, use empty string (`""`).
-- `PATH` includes the query string (e.g., `/api/partner/listings?district=B5`).
+- `PATH` includes the query string (e.g., `/api/v1/partner/listings?district=B5`).
 - Server stores the **timestamp** of each successful signed request to reject duplicates within the window.
 
 ### 4.4 API key format
@@ -159,8 +178,8 @@ libs/partner-api/
     │   ├── partner-scopes.decorator.ts
     │   └── current-partner.decorator.ts
     ├── controllers/
-    │   ├── admin-partners.controller.ts  # /api/admin/partners/*
-    │   └── partner-self.controller.ts    # /api/partner/me/*
+    │   ├── admin-partners.controller.ts  # /api/v1/admin/partners/*
+    │   └── partner-self.controller.ts    # /api/v1/partner/me/*
     ├── dto/
     │   ├── create-partner.dto.ts
     │   ├── issue-api-key.dto.ts
@@ -293,24 +312,24 @@ enum ApiKeyUsageWindow {
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/api/admin/partners` | Create partner (status defaults to `INVITED`) |
-| GET | `/api/admin/partners` | List + filter partners |
-| GET | `/api/admin/partners/:id` | Get partner detail with API key summary |
-| PATCH | `/api/admin/partners/:id` | Update name / contact / plan tier / status |
-| POST | `/api/admin/partners/:id/api-keys` | Issue new API key (returns plaintext **once**) |
-| GET | `/api/admin/partners/:id/api-keys` | List partner's API keys (no plaintext) |
-| PATCH | `/api/admin/api-keys/:id/revoke` | Hard-revoke a key |
-| PATCH | `/api/admin/api-keys/:id/rotate` | Rotate (creates a new key, marks old as `REVOKED` after grace period) |
-| GET | `/api/admin/partners/:id/usage` | Aggregated usage report by day/hour |
+| POST | `/api/v1/admin/partners` | Create partner (status defaults to `INVITED`) |
+| GET | `/api/v1/admin/partners` | List + filter partners |
+| GET | `/api/v1/admin/partners/:id` | Get partner detail with API key summary |
+| PATCH | `/api/v1/admin/partners/:id` | Update name / contact / plan tier / status |
+| POST | `/api/v1/admin/partners/:id/api-keys` | Issue new API key (returns plaintext **once**) |
+| GET | `/api/v1/admin/partners/:id/api-keys` | List partner's API keys (no plaintext) |
+| PATCH | `/api/v1/admin/api-keys/:id/revoke` | Hard-revoke a key |
+| PATCH | `/api/v1/admin/api-keys/:id/rotate` | Rotate (creates a new key, marks old as `REVOKED` after grace period) |
+| GET | `/api/v1/admin/partners/:id/usage` | Aggregated usage report by day/hour |
 
 #### 5.4.2 Partner self endpoints — Partner API Key auth
 
 | Method | Path | Purpose | HMAC required |
 |--------|------|---------|---------------|
-| GET | `/api/partner/me` | Own profile | No |
-| GET | `/api/partner/me/usage?from=...&to=...` | Usage stats | No |
-| GET | `/api/partner/me/api-keys` | List own keys (no plaintext) | No |
-| POST | `/api/partner/me/api-keys/rotate` | Rotate own key — returns new key + secret **once** | **Yes** |
+| GET | `/api/v1/partner/me` | Own profile | No |
+| GET | `/api/v1/partner/me/usage?from=...&to=...` | Usage stats | No |
+| GET | `/api/v1/partner/me/api-keys` | List own keys (no plaintext) | No |
+| POST | `/api/v1/partner/me/api-keys/rotate` | Rotate own key — returns new key + secret **once** | **Yes** |
 
 #### 5.4.3 Public-data partner endpoints (sample for v1 — extends per service)
 
@@ -318,19 +337,19 @@ These are wrappers around existing CoreMesh data, scoped for partner consumption
 
 | Method | Path | Scope | HMAC required |
 |--------|------|-------|---------------|
-| GET | `/api/partner/listings` | `read:public` (per-tenant subset) | No |
-| GET | `/api/partner/listings/:id` | `read:public` | No |
-| GET | `/api/partner/trust-score/users/:userId` | `read:public` | No |
-| GET | `/api/partner/safe-meet-spots` | `read:public` | No |
-| GET | `/api/partner/categories` | `read:public` | No |
+| GET | `/api/v1/partner/listings` | `read:public` (per-tenant subset) | No |
+| GET | `/api/v1/partner/listings/:id` | `read:public` | No |
+| GET | `/api/v1/partner/trust-score/users/:userId` | `read:public` | No |
+| GET | `/api/v1/partner/safe-meet-spots` | `read:public` | No |
+| GET | `/api/v1/partner/categories` | `read:public` | No |
 
-Each tenant module decides what subset to expose under `/api/partner/*` — opt-in, never automatic mirroring. This keeps PII control with the tenant owner.
+Each tenant module decides what subset to expose under `/api/v1/partner/*` — opt-in, never automatic mirroring. This keeps PII control with the tenant owner.
 
 ### 5.5 OpenAPI / Documentation
 
 - Add `@nestjs/swagger` decorators to all Partner API controllers.
-- Serve at `/api/partner/docs` (Swagger UI) — public, no auth required.
-- ReDoc alternative at `/api/partner/redoc`.
+- Serve at `/api/v1/partner/docs` (Swagger UI) — public, no auth required.
+- ReDoc alternative at `/api/v1/partner/redoc`.
 - A separate `partner-api.openapi.json` artifact is published on `npm version`-style releases so partners can codegen clients.
 
 ---
@@ -343,7 +362,7 @@ Each tenant module decides what subset to expose under `/api/partner/*` — opt-
 | Replay attacks on write | HMAC signature + ±300s timestamp window + `ApiKeySignatureReplay` table |
 | Brute-force key guessing | Partner key prefix is the lookup index; full hash compared in constant time; failed lookups rate-limited per IP (separate Throttler) |
 | Privilege escalation across partners | Every query in Partner controllers filters by `req.partner.id` automatically via a `@CurrentPartner()` decorator; never trust route params alone |
-| Cross-tenant data leak | `/api/partner/*` endpoints are scoped per partner; no `x-tenant-id` header recognized on partner routes — partners can't impersonate tenants |
+| Cross-tenant data leak | `/api/v1/partner/*` endpoints are scoped per partner; no `x-tenant-id` header recognized on partner routes — partners can't impersonate tenants |
 | HMAC secret leak | Stored hashed; rotated together with API key on rotation |
 | Suspended partner still reading | `PartnerKeyGuard` rejects status != ACTIVE on every request (no caching the partner row for more than 30s) |
 | DoS via 429 cost | Rate limiter check happens **before** any DB joins; only one indexed lookup |
@@ -418,7 +437,7 @@ Minimum: 30 new unit tests, 8 new integration tests, 5 new e2e tests.
 
 - **Do not** reuse JWT auth for partners. Two auth schemes, mutually exclusive at the controller level.
 - **Do not** let partners pass `x-tenant-id`. Partners are NOT tenant staff.
-- **Do not** expose internal `/api/*` routes to partners by accident. Partner endpoints live under `/api/partner/*` and `/api/admin/*`. Internal routes stay internal.
+- **Do not** expose internal `/api/*` routes to partners by accident. Partner endpoints live under `/api/v1/partner/*` and `/api/v1/admin/*`. Internal routes stay internal.
 - **Do not** mirror tenant routes 1:1. Each tenant explicitly opts-in by exporting a `partner-routes.ts` map.
 - **Do not** log API keys, HMAC secrets, or signatures. Ever. Pre-commit hook + interceptor + linter rule.
 - **Do not** rate-limit by IP for partners. They might be behind shared NAT or serverless. Rate limit by `apiKeyId`.
