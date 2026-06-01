@@ -2,6 +2,8 @@
  * Rate limit tier configuration.
  * Maps actor types to their rate limit parameters.
  */
+export const RATE_LIMIT_TIERS = 'RATE_LIMIT_TIERS';
+
 export interface RateLimitTier {
   windowMs: number;
   maxRequests: number;

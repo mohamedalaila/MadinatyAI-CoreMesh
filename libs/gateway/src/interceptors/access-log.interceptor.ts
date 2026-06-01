@@ -2,13 +2,13 @@
  * AccessLogInterceptor — always-on interceptor that emits logger.access()
  * for every HTTP request.
  */
-import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler, Inject } from '@nestjs/common';
 import { Observable, tap } from 'rxjs';
 import { LoggerService } from '@madinatyai/logging';
 
 @Injectable()
 export class AccessLogInterceptor implements NestInterceptor {
-  constructor(private readonly logger: LoggerService) {}
+  constructor(@Inject(LoggerService) private readonly logger: LoggerService) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     const request = context.switchToHttp().getRequest<{

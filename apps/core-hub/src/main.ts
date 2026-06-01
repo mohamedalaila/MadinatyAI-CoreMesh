@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { Logger, ValidationPipe } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
@@ -25,10 +26,10 @@ async function bootstrap(): Promise<void> {
     new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }),
   );
 
-  // Gateway: global filter + interceptors
+  // Gateway: global filter + interceptors (DI provides LoggerService, Reflector)
   app.useGlobalFilters(new AllExceptionsFilter());
   app.useGlobalInterceptors(
-    new ResponseEnvelopeInterceptor(app.get('Reflector')),
+    new ResponseEnvelopeInterceptor(app.get(Reflector)),
     new AccessLogInterceptor(app.get(LoggerService)),
   );
 

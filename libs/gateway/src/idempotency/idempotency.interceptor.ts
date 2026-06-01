@@ -7,11 +7,12 @@ import {
   NestInterceptor,
   ExecutionContext,
   CallHandler,
+  Inject,
+  Optional,
 } from '@nestjs/common';
 import { from, Observable, of, switchMap } from 'rxjs';
 import { IdempotencyStrategy } from './idempotency.strategy';
 import { InMemoryIdempotencyStrategy } from './in-memory-idempotency.strategy';
-import { IdempotencyKeyReusedError } from '../errors/gateway-exception';
 
 const IDEMPOTENCY_HEADER = 'idempotency-key';
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH']);
@@ -20,7 +21,9 @@ const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH']);
 export class IdempotencyInterceptor implements NestInterceptor {
   private readonly strategy: IdempotencyStrategy;
 
-  constructor(strategy?: IdempotencyStrategy) {
+  constructor(
+    @Optional() @Inject('IDEMPOTENCY_STRATEGY') strategy?: IdempotencyStrategy,
+  ) {
     this.strategy = strategy ?? new InMemoryIdempotencyStrategy();
   }
 

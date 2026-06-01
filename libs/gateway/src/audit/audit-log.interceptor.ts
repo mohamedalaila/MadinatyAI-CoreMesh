@@ -1,7 +1,7 @@
 /**
  * AuditLogInterceptor — emits logger.audit() for routes decorated with @AuditAction.
  */
-import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler, Inject } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Observable, tap } from 'rxjs';
 import { LoggerService } from '@madinatyai/logging';
@@ -11,7 +11,7 @@ import { AUDIT_ACTION_KEY, AuditActionMetadata } from './audit-action.decorator'
 export class AuditLogInterceptor implements NestInterceptor {
   constructor(
     private readonly reflector: Reflector,
-    private readonly logger: LoggerService,
+    @Inject(LoggerService) private readonly logger: LoggerService,
   ) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {

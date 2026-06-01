@@ -12,9 +12,9 @@ import { RateLimitGuard } from './rate-limit/rate-limit.guard';
 import { IdempotencyInterceptor } from './idempotency/idempotency.interceptor';
 import { InMemoryRateLimitStrategy } from './rate-limit/in-memory-rate-limit.strategy';
 import { InMemoryIdempotencyStrategy } from './idempotency/in-memory-idempotency.strategy';
+import { RATE_LIMIT_TIERS, DEFAULT_TIERS, type RateLimitGuardOptions } from './rate-limit/rate-limit-tiers';
 import type { RateLimitStrategy } from './rate-limit/rate-limit.strategy';
 import type { IdempotencyStrategy } from './idempotency/idempotency.strategy';
-import type { RateLimitGuardOptions } from './rate-limit/rate-limit-tiers';
 
 export interface GatewayModuleOptions {
   /** Logging config — used to create the LoggerService. */
@@ -44,12 +44,18 @@ export class GatewayModule {
       useFactory: () => options.idempotencyStrategy ?? new InMemoryIdempotencyStrategy(),
     };
 
+    const rateLimitTiersProvider: Provider = {
+      provide: RATE_LIMIT_TIERS,
+      useFactory: () => options.rateLimit?.tiers ?? DEFAULT_TIERS,
+    };
+
     return {
       module: GatewayModule,
       providers: [
         loggerServiceProvider,
         rateLimitStrategyProvider,
         idempotencyStrategyProvider,
+        rateLimitTiersProvider,
         AllExceptionsFilter,
         ResponseEnvelopeInterceptor,
         AccessLogInterceptor,

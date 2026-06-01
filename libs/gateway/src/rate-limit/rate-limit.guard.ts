@@ -7,12 +7,14 @@ import {
   CanActivate,
   ExecutionContext,
   SetMetadata,
+  Inject,
+  Optional,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { RateLimitError } from '../errors/gateway-exception';
-import { RateLimitStrategy, RateLimitEntry } from './rate-limit.strategy';
+import { RateLimitStrategy } from './rate-limit.strategy';
 import { InMemoryRateLimitStrategy } from './in-memory-rate-limit.strategy';
-import { DEFAULT_TIERS, RateLimitTier } from './rate-limit-tiers';
+import { DEFAULT_TIERS, RateLimitTier, RATE_LIMIT_TIERS } from './rate-limit-tiers';
 
 export const RATE_LIMIT_KEY = 'rateLimit';
 export const SkipRateLimit = () => SetMetadata(RATE_LIMIT_KEY, 'skip');
@@ -24,8 +26,8 @@ export class RateLimitGuard implements CanActivate {
 
   constructor(
     private readonly reflector: Reflector,
-    strategy?: RateLimitStrategy,
-    tiers?: Record<string, RateLimitTier>,
+    @Optional() @Inject('RATE_LIMIT_STRATEGY') strategy?: RateLimitStrategy,
+    @Optional() @Inject(RATE_LIMIT_TIERS) tiers?: Record<string, RateLimitTier>,
   ) {
     this.strategy = strategy ?? new InMemoryRateLimitStrategy();
     this.tiers = tiers ?? DEFAULT_TIERS;
