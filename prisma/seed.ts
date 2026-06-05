@@ -90,6 +90,63 @@ async function main(): Promise<void> {
          NOW(), NOW())
       ON CONFLICT (slug) DO NOTHING;
     `);
+
+    // ── Sample Souk ElKanto listings & offers ──
+    try {
+      // Check if our specific seed titles already exist to avoid duplicates
+      const existingRes = await prisma.$queryRawUnsafe<{ count: bigint }[]>(`
+        SELECT COUNT(*) as count FROM tenant_soukelkanto.listings WHERE title = 'كنبة جلد بني مستعملة'
+      `);
+      const existing = Number(existingRes[0]?.count ?? 0);
+
+      if (existing === 0) {
+        await prisma.$executeRawUnsafe(`
+          INSERT INTO tenant_soukelkanto.listings
+            (id, "sellerId", title, description, category, condition, "askingPrice", currency, district, status, "viewCount", "favoriteCount", "createdAt", "updatedAt")
+          VALUES
+            (gen_random_uuid(), '${sampleUser.id}', 'كنبة جلد بني مستعملة', 'كنبة جلد طبيعي 3 مقاعد، حالة ممتازة، استخدام سنة واحدة فقط.', 'FURNITURE', 'LIKE_NEW', 4500, 'EGP', 'B5', 'ACTIVE', 12, 3, NOW(), NOW()),
+            (gen_random_uuid(), '${sampleUser.id}', 'آيفون 13 برو 256 جيجا', 'آيفون 13 برو، بطارية 92%، مع الشاحن الأصلي والكرتونة.', 'MOBILE_TABLETS', 'GOOD', 18500, 'EGP', 'C1', 'ACTIVE', 45, 8, NOW(), NOW()),
+            (gen_random_uuid(), '${sampleUser.id}', 'دراجة هوائية للأطفال', 'دراجة مقاس 16، مناسبة لعمر 4-7 سنوات، مع كرسي إضافي خلفي.', 'SPORTS_OUTDOOR', 'FAIR', 1200, 'EGP', 'GATE', 'ACTIVE', 8, 1, NOW(), NOW()),
+            (gen_random_uuid(), '${sampleUser.id}', 'طقم أواني طهي ستانلس', 'طقم 12 قطعة ستانلس ستيل، استخدام خفيف، نظيف جداً.', 'KITCHEN_DINING', 'LIKE_NEW', 2800, 'EGP', 'MALL', 'ACTIVE', 5, 0, NOW(), NOW()),
+            (gen_random_uuid(), '${sampleUser.id}', 'فستان سهرة أسود', 'فستان مقاس M، لبسة مرة واحدة فقط، من محل محلي.', 'FASHION', 'NEW_WITH_TAGS', 1500, 'EGP', 'CLUB', 'ACTIVE', 22, 4, NOW(), NOW()),
+            (gen_random_uuid(), '${sampleUser.id}', 'مكتبة خشبية زان', 'مكتبة 4 أدراج، خشب زان صلب، عمر 3 سنوات، بحالة جيدة.', 'FURNITURE', 'GOOD', 3200, 'EGP', 'WEST', 'ACTIVE', 18, 2, NOW(), NOW()),
+            (gen_random_uuid(), '${sampleUser.id}', 'سماعات بلوتوث JBL', 'سماعات JBL Flip 5، بطارية 8 ساعات، مقاومة للماء.', 'ELECTRONICS', 'LIKE_NEW', 2100, 'EGP', 'PARK', 'ACTIVE', 33, 6, NOW(), NOW()),
+            (gen_random_uuid(), '${sampleUser.id}', 'سرير أطفال متحرك', 'سرير أطفال مع مرتبة، قابل للطي، مناسب لحديثي الولادة.', 'BABY_MATERNITY', 'GOOD', 3500, 'EGP', 'LAKE', 'ACTIVE', 7, 1, NOW(), NOW())
+        `);
+
+        // Add placeholder photos for first 3 listings
+        const firstListings = await prisma.$queryRawUnsafe<{ id: string }[]>(`
+          SELECT id FROM tenant_soukelkanto.listings ORDER BY "createdAt" DESC LIMIT 3
+        `);
+
+        for (const listing of firstListings) {
+          await prisma.$executeRawUnsafe(`
+            INSERT INTO tenant_soukelkanto.listing_photos
+              (id, "listingId", "r2Key", url, width, height, bytes, position, "uploadedAt")
+            VALUES
+              (gen_random_uuid(), '${listing.id}', 'demo/${listing.id}/1.jpg', 'https://placehold.co/400x300/e8e8e8/666?text=Photo', 400, 300, 45000, 0, NOW())
+          `);
+        }
+
+        // Add 2 offers on the first listing
+        if (firstListings.length > 0) {
+          const lid = firstListings[0].id;
+          await prisma.$executeRawUnsafe(`
+            INSERT INTO tenant_soukelkanto.offers
+              (id, "listingId", "buyerId", "sellerId", amount, note, status, "createdAt", "updatedAt")
+            VALUES
+              (gen_random_uuid(), '${lid}', '${sampleUser.id}', '${sampleUser.id}', 4000, 'ممكن 4000؟', 'PENDING', NOW(), NOW()),
+              (gen_random_uuid(), '${lid}', '${sampleUser.id}', '${sampleUser.id}', 4200, 'أقدر أدفع 4200 كاش', 'ACCEPTED', NOW(), NOW())
+          `);
+        }
+
+        console.log('Seeded 8 Souk listings + photos + 2 offers.');
+      } else {
+        console.log('Souk listings already seeded — skipping.');
+      }
+    } catch (e) {
+      console.log('Souk listings seed error:', (e as Error).message);
+    }
   }
 
   // ── Safe Meet Spots (Souk ElKanto) ──
