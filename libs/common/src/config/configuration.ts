@@ -57,6 +57,11 @@ export const configuration = () => {
       devBypass: env.NODE_ENV !== 'production' && Boolean(env.AUTH_DEV_BYPASS),
       devBypassCode: env.AUTH_DEV_BYPASS_CODE,
     },
+    waha: {
+      baseUrl: env.WAHA_BASE_URL,
+      apiKey: env.WAHA_API_KEY,
+      session: env.WAHA_SESSION,
+    },
   };
 };
 

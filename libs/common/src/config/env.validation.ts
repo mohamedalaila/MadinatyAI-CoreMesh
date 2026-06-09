@@ -53,6 +53,13 @@ export const envSchema = z.object({
   // Never enable in production.
   AUTH_DEV_BYPASS: z.coerce.boolean().default(true),
   AUTH_DEV_BYPASS_CODE: z.string().default('000000'),
+
+  // ── WAHA (WhatsApp HTTP API) ─────────────────────────────────
+  // Self-hosted WAHA instance for OTP delivery & offer notifications.
+  // Leave blank to disable WhatsApp delivery (falls back to dev console / SMS stub).
+  WAHA_BASE_URL: z.string().optional().default(''),
+  WAHA_API_KEY: z.string().optional().default(''),
+  WAHA_SESSION: z.string().optional().default('default'),
 });
 
 export type Env = z.infer<typeof envSchema>;

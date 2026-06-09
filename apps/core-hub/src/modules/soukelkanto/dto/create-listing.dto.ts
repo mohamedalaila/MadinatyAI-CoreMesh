@@ -47,6 +47,11 @@ class ListingPhotoDto {
   @IsInt()
   @Min(0)
   position!: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(512)
+  url?: string;
 }
 
 export class CreateListingDto {

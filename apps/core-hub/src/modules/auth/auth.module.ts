@@ -12,6 +12,7 @@ import {
 } from './providers/otp-delivery.provider';
 import { DevOtpDeliveryProvider } from './providers/dev-otp.provider';
 import { StubSmsOtpDeliveryProvider } from './providers/sms-otp.provider';
+import { WahaOtpDeliveryProvider } from './providers/waha-otp.provider';
 
 /**
  * Phone + OTP authentication.
@@ -20,8 +21,9 @@ import { StubSmsOtpDeliveryProvider } from './providers/sms-otp.provider';
  * APP_GUARD (Phase A.2). Routes opt out with `@Public()`.
  *
  * The {@link OtpDeliveryProvider} is selected at boot:
- *   NODE_ENV !== 'production' → DevOtpDeliveryProvider (logs to console)
- *   NODE_ENV === 'production' → StubSmsOtpDeliveryProvider (refuses; swap before launch)
+ *   WAHA configured (baseUrl + apiKey) → WahaOtpDeliveryProvider (WhatsApp)
+ *   NODE_ENV === 'production'         → StubSmsOtpDeliveryProvider (fails loud)
+ *   otherwise                         → DevOtpDeliveryProvider (console log)
  */
 @Module({
   imports: [
@@ -44,14 +46,26 @@ import { StubSmsOtpDeliveryProvider } from './providers/sms-otp.provider';
     JwtAuthGuard,
     DevOtpDeliveryProvider,
     StubSmsOtpDeliveryProvider,
+    WahaOtpDeliveryProvider,
     {
       provide: OTP_DELIVERY_PROVIDER,
-      inject: [ConfigService, DevOtpDeliveryProvider, StubSmsOtpDeliveryProvider],
+      inject: [
+        ConfigService,
+        DevOtpDeliveryProvider,
+        StubSmsOtpDeliveryProvider,
+        WahaOtpDeliveryProvider,
+      ],
       useFactory: (
         config: ConfigService,
         dev: DevOtpDeliveryProvider,
         sms: StubSmsOtpDeliveryProvider,
+        waha: WahaOtpDeliveryProvider,
       ): OtpDeliveryProvider => {
+        const wahaUrl = config.get<string>('waha.baseUrl');
+        const wahaKey = config.get<string>('waha.apiKey');
+        if (wahaUrl && wahaKey) {
+          return waha;
+        }
         return config.get<string>('nodeEnv') === 'production' ? sms : dev;
       },
     },

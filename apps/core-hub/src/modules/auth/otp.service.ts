@@ -125,6 +125,11 @@ export class OtpService {
   }
 
   private isDevBypass(code: string): boolean {
+    // WAHA takes precedence - never allow dev bypass when WhatsApp OTP is live
+    const wahaUrl = this.config.get<string>('waha.baseUrl');
+    const wahaKey = this.config.get<string>('waha.apiKey');
+    if (wahaUrl && wahaKey) return false;
+
     const enabled = this.config.get<boolean>('auth.devBypass') ?? false;
     if (!enabled) return false;
     const bypass = this.config.get<string>('auth.devBypassCode') ?? '000000';

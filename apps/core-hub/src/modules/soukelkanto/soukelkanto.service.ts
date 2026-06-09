@@ -5,6 +5,7 @@ import { PrismaService } from '@madinatyai/prisma';
 import { EventsService } from '@madinatyai/events';
 import { TokensService } from '@madinatyai/tokens';
 import { ReportsService } from '../reports/reports.service';
+import { WahaNotificationService } from '../notifications/waha-notification.service';
 import { R2StorageService } from './storage/r2-storage.service';
 import { SoukCategory, SoukCondition } from './dto/create-listing.dto';
 import type { PhotoUploadUrlResponse } from './dto/photo-upload.dto';
@@ -47,6 +48,7 @@ export class SoukElKantoService {
     private readonly config: ConfigService,
     private readonly reports: ReportsService,
     private readonly storage: R2StorageService,
+    private readonly notifications: WahaNotificationService,
   ) {}
 
   // ─────────────── Listings ───────────────
@@ -60,7 +62,7 @@ export class SoukElKantoService {
       condition: SoukCondition;
       askingPrice: number;
       district: string;
-      photos?: Array<{ r2Key: string; position: number }>;
+      photos?: Array<{ r2Key: string; position: number; url?: string }>;
     },
   ) {
     // Trust gate: users at or below the ban threshold cannot list.
@@ -93,7 +95,7 @@ export class SoukElKantoService {
           ? {
               create: dto.photos.map((p) => ({
                 r2Key: p.r2Key,
-                url: '',
+                url: p.url || '',
                 width: 0,
                 height: 0,
                 bytes: 0,
@@ -297,6 +299,13 @@ export class SoukElKantoService {
     });
 
     this.logger.log(`Offer ${offer.id} created on listing ${dto.listingId}`);
+
+    // Notify seller via WhatsApp (fire-and-forget)
+    this.notifyAsync('OFFER_CREATED', listing.sellerId, {
+      listingTitle: listing.title,
+      offerAmount: dto.amount,
+    });
+
     return offer;
   }
 
@@ -310,7 +319,10 @@ export class SoukElKantoService {
   }
 
   async acceptOffer(offerId: string, sellerId: string) {
-    const offer = await this.prisma.soukOffer.findUnique({ where: { id: offerId } });
+    const offer = await this.prisma.soukOffer.findUnique({
+      where: { id: offerId },
+      include: { listing: true },
+    });
     if (!offer) throw new NotFoundException(`Offer ${offerId} not found`);
     if (offer.sellerId !== sellerId) throw new ForbiddenException('Not the seller');
     if (offer.status !== 'PENDING' && offer.status !== 'COUNTERED') {
@@ -348,25 +360,45 @@ export class SoukElKantoService {
       this.logger.warn(`Event emit failed: ${(err as Error).message}`);
     }
 
+    // Notify buyer via WhatsApp (fire-and-forget)
+    this.notifyAsync('OFFER_ACCEPTED', offer.buyerId, {
+      listingTitle: offer.listing.title,
+      offerAmount: offer.amount,
+    });
+
     return updated;
   }
 
   async declineOffer(offerId: string, sellerId: string, _reason?: string) {
-    const offer = await this.prisma.soukOffer.findUnique({ where: { id: offerId } });
+    const offer = await this.prisma.soukOffer.findUnique({
+      where: { id: offerId },
+      include: { listing: true },
+    });
     if (!offer) throw new NotFoundException(`Offer ${offerId} not found`);
     if (offer.sellerId !== sellerId) throw new ForbiddenException('Not the seller');
     if (offer.status !== 'PENDING' && offer.status !== 'COUNTERED') {
       throw new ForbiddenException('Offer cannot be declined');
     }
 
-    return this.prisma.soukOffer.update({
+    const updated = await this.prisma.soukOffer.update({
       where: { id: offerId },
       data: { status: 'DECLINED', declinedAt: new Date() },
     });
+
+    // Notify buyer via WhatsApp (fire-and-forget)
+    this.notifyAsync('OFFER_DECLINED', offer.buyerId, {
+      listingTitle: offer.listing.title,
+      offerAmount: offer.amount,
+    });
+
+    return updated;
   }
 
   async counterOffer(offerId: string, sellerId: string, amount: number) {
-    const parent = await this.prisma.soukOffer.findUnique({ where: { id: offerId } });
+    const parent = await this.prisma.soukOffer.findUnique({
+      where: { id: offerId },
+      include: { listing: true },
+    });
     if (!parent) throw new NotFoundException(`Offer ${offerId} not found`);
     if (parent.sellerId !== sellerId) throw new ForbiddenException('Not the seller');
     if (parent.status !== 'PENDING') throw new ForbiddenException('Offer cannot be countered');
@@ -378,7 +410,7 @@ export class SoukElKantoService {
     });
 
     // Create new counter offer
-    return this.prisma.soukOffer.create({
+    const counter = await this.prisma.soukOffer.create({
       data: {
         listingId: parent.listingId,
         buyerId: parent.buyerId,
@@ -388,20 +420,40 @@ export class SoukElKantoService {
         parentOfferId: offerId,
       },
     });
+
+    // Notify buyer via WhatsApp (fire-and-forget)
+    this.notifyAsync('OFFER_COUNTERED', parent.buyerId, {
+      listingTitle: parent.listing.title,
+      offerAmount: parent.amount,
+      counterAmount: amount,
+    });
+
+    return counter;
   }
 
   async withdrawOffer(offerId: string, buyerId: string) {
-    const offer = await this.prisma.soukOffer.findUnique({ where: { id: offerId } });
+    const offer = await this.prisma.soukOffer.findUnique({
+      where: { id: offerId },
+      include: { listing: true },
+    });
     if (!offer) throw new NotFoundException(`Offer ${offerId} not found`);
     if (offer.buyerId !== buyerId) throw new ForbiddenException('Not the buyer');
     if (offer.status !== 'PENDING' && offer.status !== 'COUNTERED') {
       throw new ForbiddenException('Offer cannot be withdrawn');
     }
 
-    return this.prisma.soukOffer.update({
+    const updated = await this.prisma.soukOffer.update({
       where: { id: offerId },
       data: { status: 'WITHDRAWN', withdrawnAt: new Date() },
     });
+
+    // Notify seller via WhatsApp (fire-and-forget)
+    this.notifyAsync('OFFER_WITHDRAWN', offer.sellerId, {
+      listingTitle: offer.listing.title,
+      offerAmount: offer.amount,
+    });
+
+    return updated;
   }
 
   async listSentOffers(buyerId: string) {
@@ -689,5 +741,38 @@ export class SoukElKantoService {
       labelEn: labels[value]?.en ?? value,
       labelAr: labels[value]?.ar ?? value,
     }));
+  }
+
+  // ─────────────── Notification helpers ───────────────
+
+  /**
+   * Fire-and-forget WhatsApp notification. Looks up the user's phone number,
+   * then delegates to WahaNotificationService. Swallows all errors so business
+   * logic is never blocked by a flaky WhatsApp connection.
+   */
+  private notifyAsync(
+    type: Parameters<WahaNotificationService['sendOfferNotification']>[0]['type'],
+    userId: string,
+    meta: { listingTitle: string; offerAmount: number; counterAmount?: number },
+  ): void {
+    // Fire-and-forget: don't await, don't throw.
+    (async () => {
+      try {
+        const user = await this.prisma.globalUser.findUnique({
+          where: { id: userId },
+          select: { phoneNumber: true },
+        });
+        if (!user?.phoneNumber) return;
+        await this.notifications.sendOfferNotification({
+          type,
+          recipientPhone: user.phoneNumber,
+          listingTitle: meta.listingTitle,
+          offerAmount: meta.offerAmount,
+          counterAmount: meta.counterAmount,
+        });
+      } catch {
+        /* best effort — never block the request */
+      }
+    })();
   }
 }

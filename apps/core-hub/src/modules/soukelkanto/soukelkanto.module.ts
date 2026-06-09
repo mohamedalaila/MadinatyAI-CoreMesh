@@ -4,6 +4,7 @@ import { AiRouterModule } from '@madinatyai/ai-router';
 import { TokensModule } from '@madinatyai/tokens';
 import { EventsModule } from '@madinatyai/events';
 import { ReportsModule } from '../reports/reports.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { SoukElKantoService } from './soukelkanto.service';
 import { R2StorageService } from './storage/r2-storage.service';
 import { SoukAiSuggestService } from './ai/ai-suggest.service';
@@ -24,7 +25,7 @@ import { SoukAiSuggestionsController } from './ai/ai-suggestions.controller';
  * `tenant_soukelkanto` schema.
  */
 @Module({
-  imports: [PrismaModule, AiRouterModule, TokensModule, EventsModule, ReportsModule],
+  imports: [PrismaModule, AiRouterModule, TokensModule, EventsModule, ReportsModule, NotificationsModule],
   providers: [SoukElKantoService, R2StorageService, SoukAiSuggestService],
   controllers: [
     ListingsController,

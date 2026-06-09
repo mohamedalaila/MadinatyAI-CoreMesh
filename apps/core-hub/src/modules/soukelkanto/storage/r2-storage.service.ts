@@ -3,7 +3,6 @@ import { extname } from 'node:path';
 import {
   Injectable,
   Logger,
-  ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { S3Client } from '@aws-sdk/client-s3';
@@ -17,7 +16,7 @@ interface PresignParams {
   bytes: number;
 }
 
-interface PresignResult {
+export interface PresignResult {
   uploadUrl: string;
   r2Key: string;
   publicUrl: string;
@@ -27,13 +26,15 @@ interface PresignResult {
 /**
  * Cloudflare R2 storage adapter for listing photos.
  *
- * Wraps the AWS S3 SDK v3 against an R2-compatible endpoint. When the R2
- * credentials are not provided (typical local-dev), every call throws
- * `ServiceUnavailableException` with a clear message — the FE handles this
- * by hiding the upload flow rather than crashing.
+ * Wraps the AWS S3 SDK v3 against an R2-compatible endpoint. When R2 is not
+ * configured (typical local-dev), falls back to local disk storage:
+ *   - `presignUpload` returns a local PUT URL (`/api/v1/uploads/<key>`)
+ *   - The raw-upload middleware in main.ts streams bytes to `./storage/uploads/`
+ *   - Files are served statically via `GET /api/v1/uploads/<key>`
  *
- * Key shape: `uploads/<userId>/<YYYY-MM-DD>/<random>.<ext>`. Random component
- * prevents enumeration. Date prefix helps with lifecycle rules + retention.
+ * This keeps the FE upload flow identical in dev and production.
+ *
+ * Key shape: `uploads/<userId>/<YYYY-MM-DD>/<random>.<ext>`
  */
 @Injectable()
 export class R2StorageService {
@@ -42,6 +43,7 @@ export class R2StorageService {
   private readonly bucket: string;
   private readonly publicBase: string;
   private readonly ttl: number;
+  private readonly localBaseUrl: string;
 
   constructor(private readonly config: ConfigService) {
     const endpoint = config.get<string>('r2.endpoint');
@@ -53,11 +55,12 @@ export class R2StorageService {
     this.ttl = config.get<number>('r2.presignTtlSeconds') ?? 300;
     this.bucket = bucket ?? '';
     this.publicBase = publicBase ?? '';
+    this.localBaseUrl = config.get<string>('corsOrigins')?.[0]?.replace(/\/$/, '') ?? '';
 
     if (!endpoint || !accessKeyId || !secret || !bucket || !publicBase) {
       this.client = null;
       this.logger.warn(
-        'R2 not configured — photo-upload-url will return 503. Set KANTO_R2_* envs to enable.',
+        'R2 not configured — using local disk fallback for photo uploads.',
       );
       return;
     }
@@ -77,28 +80,40 @@ export class R2StorageService {
   }
 
   /**
-   * Generate a presigned PUT URL the FE uses to upload a single photo
-   * directly to R2 (bypasses the BE for the bytes themselves).
+   * Generate a presigned PUT URL the FE uses to upload a single photo.
+   *
+   * When R2 is configured → returns a real R2 presigned URL.
+   * When R2 is NOT configured → returns a local disk URL handled by the
+   * raw-upload middleware in main.ts (zero FE changes required).
    */
   async presignUpload(params: PresignParams): Promise<PresignResult> {
+    const key = this.buildKey(params.userId, params.filename);
+
     if (!this.client) {
-      throw new ServiceUnavailableException(
-        'Photo storage not configured. Set KANTO_R2_* in .env to enable uploads.',
-      );
+      // Local disk fallback — the FE PUTs to this URL and the raw-upload
+      // middleware streams the bytes straight to disk.
+      const uploadUrl = this.localBaseUrl
+        ? `${this.localBaseUrl}/api/v1/uploads/${key}`
+        : `/api/v1/uploads/${key}`;
+      return {
+        uploadUrl,
+        r2Key: key,
+        publicUrl: uploadUrl,
+        expiresInSeconds: 300,
+      };
     }
 
-    const r2Key = this.buildKey(params.userId, params.filename);
     const cmd = new PutObjectCommand({
       Bucket: this.bucket,
-      Key: r2Key,
+      Key: key,
       ContentType: params.contentType,
       ContentLength: params.bytes,
     });
     const uploadUrl = await getSignedUrl(this.client, cmd, { expiresIn: this.ttl });
     return {
       uploadUrl,
-      r2Key,
-      publicUrl: `${this.publicBase.replace(/\/$/, '')}/${r2Key}`,
+      r2Key: key,
+      publicUrl: `${this.publicBase.replace(/\/$/, '')}/${key}`,
       expiresInSeconds: this.ttl,
     };
   }

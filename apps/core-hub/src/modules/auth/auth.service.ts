@@ -108,6 +108,13 @@ export class AuthService {
       isVerified: user.isVerified,
       trustScore: user.trustScore,
       metadata: user.metadata,
+      fullName: (user.metadata as Record<string, unknown> | undefined)?.fullName as string | undefined,
+      gender: (user.metadata as Record<string, unknown> | undefined)?.gender as string | undefined,
+      birthdate: (user.metadata as Record<string, unknown> | undefined)?.birthdate as string | undefined,
+      address: (user.metadata as Record<string, unknown> | undefined)?.address as string | undefined,
+      madinatyGroup: (user.metadata as Record<string, unknown> | undefined)?.madinatyGroup as string | undefined,
+      buildingNo: (user.metadata as Record<string, unknown> | undefined)?.buildingNo as string | undefined,
+      aptNo: (user.metadata as Record<string, unknown> | undefined)?.aptNo as string | undefined,
       kyc: user.kyc
         ? { status: user.kyc.status, reviewedAt: user.kyc.reviewedAt }
         : null,
