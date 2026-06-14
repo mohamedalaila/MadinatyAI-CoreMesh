@@ -30,7 +30,7 @@ BEGIN
        NOW(), NOW());
 
     -- ── 14 listings ──
-    INSERT INTO tenant_soukelkanto."SoukListing"
+    INSERT INTO tenant_soukelkanto.listings
       (id, "sellerId", title, description, category, condition, "askingPrice", district, status, "createdAt", "updatedAt")
     VALUES
       ('aaaa0001-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111',
@@ -118,7 +118,7 @@ BEGIN
        NOW() - INTERVAL '11 days', NOW() - INTERVAL '11 days');
 
     -- ── photos (1-3 per listing, keyword-matched via loremflickr) ──
-    INSERT INTO tenant_soukelkanto."SoukListingPhoto"
+    INSERT INTO tenant_soukelkanto.listing_photos
       (id, "listingId", "r2Key", url, width, height, bytes, position, "uploadedAt")
     VALUES
       -- 1. PlayStation 5 — 2 photos
