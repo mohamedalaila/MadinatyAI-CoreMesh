@@ -48,7 +48,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
         if (Array.isArray(obj.message)) {
           // ValidationPipe produces array of messages
           details = (obj.message as string[]).map((m) => ({ message: m }));
-          message = 'Validation failed';
+          message = (obj.message as string[]).join(', ');
         }
       } else {
         message = exception.message;

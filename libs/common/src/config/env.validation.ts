@@ -8,7 +8,7 @@ import { z } from 'zod';
 export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
-  CORS_ORIGINS: z.string().default('http://localhost:3000'),
+  CORS_ORIGINS: z.string().default('http://localhost:3000,http://localhost:3001'),
   ROOT_DOMAIN: z.string().min(1).default('madinatyai.com'),
 
   DATABASE_URL: z.string().url().or(z.string().startsWith('postgresql://')),
