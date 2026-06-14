@@ -85,12 +85,14 @@ export function uploadMiddleware(req: Request, res: Response, next: NextFunction
   // GET — serve file with a sanitised content-type so browsers can't be
   // tricked into rendering a stored payload as HTML/script.
   if (req.method === 'GET') {
+    res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Content-Type', safeContentTypeFor(key));
     res.setHeader('Content-Disposition', `inline; filename="${key.split('/').pop() ?? 'file'}"`);
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.sendFile(filePath, (err) => {
       if (err) {
-        res.status(404).json({ error: 'Not found' });
+        if (!res.headersSent) res.status(404).json({ error: 'Not found' });
       }
     });
     return;
@@ -98,6 +100,9 @@ export function uploadMiddleware(req: Request, res: Response, next: NextFunction
 
   // PUT — save raw body to disk with a size cap.
   if (req.method === 'PUT') {
+    res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    
     let received = 0;
     let truncated = false;
     const chunks: Buffer[] = [];
@@ -127,9 +132,9 @@ export function uploadMiddleware(req: Request, res: Response, next: NextFunction
         const buffer = Buffer.concat(chunks);
         await mkdir(dirname(filePath), { recursive: true });
         await writeFile(filePath, buffer);
-        res.status(200).json({ ok: true });
+        if (!res.headersSent) res.status(200).json({ ok: true });
       } catch {
-        res.status(500).json({ error: 'Save failed' });
+        if (!res.headersSent) res.status(500).json({ error: 'Save failed' });
       }
     });
     req.on('error', () => {
