@@ -123,7 +123,19 @@ export class UsersController {
       data: { metadata: metadata as Prisma.InputJsonValue },
       select: { id: true, phoneNumber: true, role: true, isVerified: true, trustScore: true, metadata: true, createdAt: true },
     });
-    return updated;
+    
+    // Flatten metadata fields for the frontend exactly like /auth/me does
+    const meta = updated.metadata as Record<string, unknown> | undefined;
+    return {
+      ...updated,
+      fullName: meta?.fullName as string | undefined,
+      gender: meta?.gender as string | undefined,
+      birthdate: meta?.birthdate as string | undefined,
+      address: meta?.address as string | undefined,
+      madinatyGroup: meta?.madinatyGroup as string | undefined,
+      buildingNo: meta?.buildingNo as string | undefined,
+      aptNo: meta?.aptNo as string | undefined,
+    };
   }
 
 }
