@@ -1,12 +1,14 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Post, Req, Res } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AuditAction } from '@madinatyai/gateway';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
+import { DeviceTokenService } from './device-token.service';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { Public } from './decorators/public.decorator';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { RegisterDeviceTokenDto } from './dto/register-device-token.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import type { AuthenticatedUser, JwtPayload } from './types/authenticated-user';
 import type { AuthCookieDescriptor } from './auth.service';
@@ -30,7 +32,10 @@ function setAuthCookie(res: Response, cookie: AuthCookieDescriptor): void {
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly deviceTokens: DeviceTokenService,
+  ) {}
 
   /** Create a GlobalUser (if absent) and dispatch a REGISTER OTP. */
   @Public()
@@ -110,5 +115,26 @@ export class AuthController {
       path: del.path,
       maxAge: 0,
     });
+  }
+
+  /** Register an FCM push-notification device token. */
+  @Post('device-token')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Register an FCM device token for push notifications' })
+  async registerDeviceToken(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: RegisterDeviceTokenDto,
+  ): Promise<void> {
+    await this.deviceTokens.register(user.id, dto.token, dto.platform, dto.appSlug);
+  }
+
+  /** Unregister an FCM device token (deactivate). */
+  @Delete('device-token')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Unregister an FCM device token' })
+  async unregisterDeviceToken(@Body() body: { token: string }): Promise<void> {
+    await this.deviceTokens.unregister(body.token);
   }
 }

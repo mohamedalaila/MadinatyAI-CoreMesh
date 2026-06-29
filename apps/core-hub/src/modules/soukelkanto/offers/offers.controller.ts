@@ -6,6 +6,7 @@ import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../../auth/types/authenticated-user';
 import { SoukElKantoService } from '../soukelkanto.service';
 import { CounterOfferDto, CreateOfferDto, DeclineOfferDto } from '../dto/create-offer.dto';
+import { CancelOfferDto } from '../dto/cancel-offer.dto';
 
 @ApiTags('Souk ElKanto — Offers')
 @ApiBearerAuth()
@@ -92,5 +93,25 @@ export class OffersController {
   @Get('received')
   received(@CurrentUser() user: AuthenticatedUser) {
     return this.souk.listReceivedOffers(user.id);
+  }
+
+  // ── Contact reveal (post-accept) ────────────────────────────────────
+
+  @Get(':id/contact')
+  @AuditAction({ action: 'souk.offer.revealContact', target: 'offer' })
+  revealContact(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.souk.revealContact(id, user.id);
+  }
+
+  // ── Cancel / no-show ────────────────────────────────────────────────
+
+  @Post(':id/cancel')
+  @AuditAction({ action: 'souk.offer.cancel', target: 'offer' })
+  cancel(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: CancelOfferDto,
+  ) {
+    return this.souk.cancelOffer(id, user.id, dto.reason);
   }
 }

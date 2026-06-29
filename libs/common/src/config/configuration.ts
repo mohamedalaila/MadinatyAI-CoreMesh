@@ -64,6 +64,7 @@ export const configuration = () => {
       apiKey: env.WAHA_API_KEY,
       session: env.WAHA_SESSION,
     },
+    soukSupportPhone: env.SOUK_SUPPORT_PHONE,
   };
 };
 

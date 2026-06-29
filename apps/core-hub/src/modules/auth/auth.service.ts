@@ -6,7 +6,7 @@ import { Role } from '@prisma/client';
 import { PrismaService } from '@madinatyai/prisma';
 import { OtpService } from './otp.service';
 import { JtiDenyListService } from './jti-deny-list.service';
-import type { AuthenticatedUser, JwtPayload } from './types/authenticated-user';
+import type { AuthenticatedUser, JwtPayload, UserProfile } from './types/authenticated-user';
 
 /**
  * R-11 F-15 — cookie config produced by `verifyOtp` so the controller can
@@ -96,20 +96,23 @@ export class AuthService {
   async verifyOtp(
     phoneNumber: string,
     code: string,
-  ): Promise<{ token: string; user: AuthenticatedUser; cookie: AuthCookieDescriptor }> {
+  ): Promise<{ token: string; user: UserProfile; cookie: AuthCookieDescriptor }> {
     await this.otp.verify(phoneNumber, code);
 
-    const user = await this.prisma.globalUser.findUnique({
+    const minimal = await this.prisma.globalUser.findUnique({
       where: { phoneNumber },
       select: { id: true, phoneNumber: true, role: true },
     });
-    if (!user) {
+    if (!minimal) {
       // Edge case: user was deleted between register & verify.
       throw new NotFoundException('User no longer exists.');
     }
 
-    const { token, maxAgeSeconds } = await this.issueToken(user);
+    const { token, maxAgeSeconds } = await this.issueToken(minimal);
     const cookie = this.describeAuthCookie(token, maxAgeSeconds);
+    // Return the full profile projection so clients can hydrate without a
+    // follow-up GET /auth/me (Pre-Phase A — profile persistence fix).
+    const user = await this.loadUserProfile(minimal.id);
     return { token, user, cookie };
   }
 
@@ -170,7 +173,16 @@ export class AuthService {
   }
 
   /** Load the full /me view for an authenticated principal. */
-  async me(userId: string) {
+  async me(userId: string): Promise<UserProfile> {
+    return this.loadUserProfile(userId);
+  }
+
+  /**
+   * Fetch a GlobalUser with KYC and flatten `metadata` into top-level fields.
+   * Shared by `/auth/verify-otp` and `/auth/me` so both return the same
+   * profile projection (Pre-Phase A — profile persistence fix).
+   */
+  private async loadUserProfile(userId: string): Promise<UserProfile> {
     const user = await this.prisma.globalUser.findUnique({
       where: { id: userId },
       include: { kyc: { select: { status: true, reviewedAt: true } } },
@@ -178,6 +190,7 @@ export class AuthService {
     if (!user) {
       throw new NotFoundException('User not found.');
     }
+    const meta = user.metadata as Record<string, unknown> | undefined;
     return {
       id: user.id,
       phoneNumber: user.phoneNumber,
@@ -185,13 +198,13 @@ export class AuthService {
       isVerified: user.isVerified,
       trustScore: user.trustScore,
       metadata: user.metadata,
-      fullName: (user.metadata as Record<string, unknown> | undefined)?.fullName as string | undefined,
-      gender: (user.metadata as Record<string, unknown> | undefined)?.gender as string | undefined,
-      birthdate: (user.metadata as Record<string, unknown> | undefined)?.birthdate as string | undefined,
-      address: (user.metadata as Record<string, unknown> | undefined)?.address as string | undefined,
-      madinatyGroup: (user.metadata as Record<string, unknown> | undefined)?.madinatyGroup as string | undefined,
-      buildingNo: (user.metadata as Record<string, unknown> | undefined)?.buildingNo as string | undefined,
-      aptNo: (user.metadata as Record<string, unknown> | undefined)?.aptNo as string | undefined,
+      fullName: meta?.fullName as string | undefined,
+      gender: meta?.gender as string | undefined,
+      birthdate: meta?.birthdate as string | undefined,
+      address: meta?.address as string | undefined,
+      madinatyGroup: meta?.madinatyGroup as string | undefined,
+      buildingNo: meta?.buildingNo as string | undefined,
+      aptNo: meta?.aptNo as string | undefined,
       kyc: user.kyc
         ? { status: user.kyc.status, reviewedAt: user.kyc.reviewedAt }
         : null,

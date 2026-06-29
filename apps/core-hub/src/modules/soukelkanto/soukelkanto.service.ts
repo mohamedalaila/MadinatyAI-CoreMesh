@@ -37,6 +37,7 @@ export enum SoukOfferStatus {
   HANDOVER_PENDING = 'HANDOVER_PENDING',
   CONFIRMED = 'CONFIRMED',
   CLOSED = 'CLOSED',
+  CANCELLED = 'CANCELLED',
 }
 
 /**
@@ -1309,6 +1310,316 @@ export class SoukElKantoService {
       labelEn: labels[value]?.en ?? value,
       labelAr: labels[value]?.ar ?? value,
     }));
+  }
+
+  // ─────────────── Contact Reveal ───────────────
+
+  async revealContact(offerId: string, callerId: string) {
+    const offer = await this.prisma.soukOffer.findUnique({
+      where: { id: offerId },
+      include: { listing: { select: { title: true } } },
+    });
+    if (!offer) throw new NotFoundException(`Offer ${offerId} not found`);
+
+    const isBuyer = offer.buyerId === callerId;
+    const isSeller = offer.sellerId === callerId;
+    if (!isBuyer && !isSeller) {
+      throw new ForbiddenException('Not a party to this offer');
+    }
+
+    const eligible = ['ACCEPTED', 'HANDOVER_PENDING', 'CONFIRMED'];
+    if (!eligible.includes(offer.status)) {
+      throw new ForbiddenException(
+        `CONTACT_REVEAL_NOT_ALLOWED: offer is ${offer.status}`,
+      );
+    }
+
+    const counterpartId = isBuyer ? offer.sellerId : offer.buyerId;
+    const counterpart = await this.prisma.globalUser.findUnique({
+      where: { id: counterpartId },
+      select: { id: true, phoneNumber: true, trustScore: true, metadata: true },
+    });
+    if (!counterpart) throw new NotFoundException('Counterpart not found');
+
+    const meta = counterpart.metadata as Record<string, unknown> | undefined;
+    const fullName = (meta?.fullName as string) ?? undefined;
+    const trustTier = this.trustTier(counterpart.trustScore);
+    const waMeLink = `https://wa.me/${counterpart.phoneNumber.replace(/\D/g, '')}`;
+
+    return {
+      offerId,
+      counterpartId: counterpart.id,
+      fullName,
+      phoneNumber: counterpart.phoneNumber,
+      trustScore: counterpart.trustScore,
+      trustTier,
+      waMeLink,
+      listingTitle: offer.listing.title,
+    };
+  }
+
+  // ─────────────── Cancel / No-Show ───────────────
+
+  async cancelOffer(offerId: string, callerId: string, reason: string) {
+    const offer = await this.prisma.soukOffer.findUnique({
+      where: { id: offerId },
+      include: { listing: true },
+    });
+    if (!offer) throw new NotFoundException(`Offer ${offerId} not found`);
+
+    if (offer.buyerId !== callerId && offer.sellerId !== callerId) {
+      throw new ForbiddenException('Not a party to this offer');
+    }
+
+    const cancellable = ['ACCEPTED', 'HANDOVER_PENDING'];
+    if (!cancellable.includes(offer.status)) {
+      throw new ForbiddenException(
+        `OFFER_NOT_CANCELLABLE: offer is ${offer.status}`,
+      );
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const cancelled = await tx.soukOffer.update({
+        where: { id: offerId },
+        data: {
+          status: 'CANCELLED',
+          declineReason: reason.slice(0, 80),
+        },
+      });
+      await tx.soukListing.update({
+        where: { id: offer.listingId },
+        data: { status: 'ACTIVE' },
+      });
+      return cancelled;
+    });
+
+    // Release token hold (best-effort)
+    if (offer.tokenHoldAmount && offer.tokenHoldAmount > 0) {
+      try {
+        await this.tokens.credit(
+          offer.buyerId,
+          0,
+          'individual',
+          `Offer cancelled — token hold released (${reason})`,
+        );
+      } catch {
+        /* best effort */
+      }
+    }
+
+    // Emit event
+    try {
+      await this.events.emit({
+        sourceSubdomain: 'kanto',
+        eventType: 'souk.offer.cancelled',
+        userId: offer.buyerId === callerId ? offer.sellerId : offer.buyerId,
+        payload: { offerId, listingId: offer.listingId, reason, cancelledBy: callerId },
+      });
+    } catch (err) {
+      this.logger.warn(`Event emit failed: ${(err as Error).message}`);
+    }
+
+    // Notify counterpart (best-effort WhatsApp)
+    const counterpartId = offer.buyerId === callerId ? offer.sellerId : offer.buyerId;
+    this.notifyAsync('OFFER_DECLINED', counterpartId, {
+      listingTitle: offer.listing.title,
+      offerAmount: offer.amount,
+    });
+
+    return updated;
+  }
+
+  // ─────────────── Disputes ───────────────
+
+  /**
+   * Dispute window: 48h after CONFIRMED or CANCELLED. For ACCEPTED/HANDOVER_PENDING
+   * disputes can be filed at any time (e.g. no-show).
+   */
+  private disputeWindowMs = 48 * 60 * 60 * 1000;
+
+  async createDispute(
+    filedById: string,
+    dto: {
+      offerId: string;
+      reason: string;
+      description?: string;
+      evidenceR2Key?: string;
+    },
+  ) {
+    const offer = await this.prisma.soukOffer.findUnique({
+      where: { id: dto.offerId },
+      include: { handover: true, disputes: true },
+    });
+    if (!offer) throw new NotFoundException(`Offer ${dto.offerId} not found`);
+
+    if (offer.buyerId !== filedById && offer.sellerId !== filedById) {
+      throw new ForbiddenException('Not a party to this offer');
+    }
+
+    // One dispute per offer
+    const existingOpen = offer.disputes.find((d) => d.status === 'OPEN');
+    if (existingOpen) {
+      throw new ForbiddenException('DISPUTE_ALREADY_OPEN');
+    }
+
+    // Eligible states: ACCEPTED, HANDOVER_PENDING, CONFIRMED, CANCELLED
+    const eligibleStates = ['ACCEPTED', 'HANDOVER_PENDING', 'CONFIRMED', 'CANCELLED'];
+    if (!eligibleStates.includes(offer.status)) {
+      throw new ForbiddenException(
+        `DISPUTE_NOT_ALLOWED: offer is ${offer.status}`,
+      );
+    }
+
+    // Dispute window check for CONFIRMED/CANCELLED
+    if (offer.status === 'CONFIRMED' || offer.status === 'CANCELLED') {
+      const referenceTime = offer.handover?.bothConfirmedAt ?? offer.updatedAt;
+      if (new Date().getTime() - referenceTime.getTime() > this.disputeWindowMs) {
+        throw new ForbiddenException('DISPUTE_WINDOW_CLOSED');
+      }
+    }
+
+    const againstId = offer.buyerId === filedById ? offer.sellerId : offer.buyerId;
+
+    const dispute = await this.prisma.soukDispute.create({
+      data: {
+        offerId: dto.offerId,
+        filedById,
+        againstId,
+        reason: dto.reason as never,
+        description: dto.description,
+        evidenceR2Key: dto.evidenceR2Key,
+      },
+    });
+
+    // Emit event
+    try {
+      await this.events.emit({
+        sourceSubdomain: 'kanto',
+        eventType: 'souk.dispute.opened',
+        userId: againstId,
+        payload: {
+          disputeId: dispute.id,
+          offerId: dto.offerId,
+          reason: dto.reason,
+          filedById,
+        },
+      });
+    } catch (err) {
+      this.logger.warn(`Dispute event emit failed: ${(err as Error).message}`);
+    }
+
+    // Notify counterpart (best-effort)
+    this.notifyAsync('OFFER_DECLINED', againstId, {
+      listingTitle: 'Dispute opened',
+      offerAmount: offer.amount,
+    });
+
+    return dispute;
+  }
+
+  async listMyDisputes(userId: string) {
+    return this.prisma.soukDispute.findMany({
+      where: {
+        OR: [{ filedById: userId }, { againstId: userId }],
+      },
+      include: {
+        offer: {
+          select: {
+            id: true,
+            listingId: true,
+            amount: true,
+            status: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async resolveDispute(
+    disputeId: string,
+    resolverId: string,
+    resolution: string,
+    fileReport?: boolean,
+  ) {
+    const dispute = await this.prisma.soukDispute.findUnique({
+      where: { id: disputeId },
+      include: { offer: true },
+    });
+    if (!dispute) throw new NotFoundException(`Dispute ${disputeId} not found`);
+    if (dispute.status !== 'OPEN') {
+      throw new ForbiddenException('Dispute already resolved');
+    }
+
+    const updated = await this.prisma.soukDispute.update({
+      where: { id: disputeId },
+      data: {
+        status: 'RESOLVED',
+        resolvedAt: new Date(),
+        resolvedById: resolverId,
+        resolution,
+      },
+    });
+
+    // Optionally file an EcosystemSharedReport (reuses ReportsService → trust score)
+    if (fileReport) {
+      try {
+        const incidentMap: Record<string, IncidentType> = {
+          COUNTERFEIT: 'FRAUD',
+          SAFETY_CONCERN: 'ABUSE',
+          SELLER_BACKED_OUT: 'POLICY_VIOLATION',
+          BUYER_BACKED_OUT: 'POLICY_VIOLATION',
+          NO_SHOW: 'POLICY_VIOLATION',
+          ITEM_NOT_AS_DESCRIBED: 'POLICY_VIOLATION',
+          ITEM_DEFECTIVE: 'POLICY_VIOLATION',
+          PAYMENT_ISSUE: 'FRAUD',
+          OTHER: 'OTHER',
+        };
+        const incidentType = incidentMap[dispute.reason] ?? 'OTHER';
+        const { report } = await this.reports.file({
+          reporterId: dispute.filedById,
+          offenderId: dispute.againstId,
+          incidentType,
+          severity: 3,
+          originSubdomain: 'kanto',
+        });
+        await this.prisma.soukDispute.update({
+          where: { id: disputeId },
+          data: { reportRowId: report.id },
+        });
+      } catch (err) {
+        this.logger.warn(`Report filing failed: ${(err as Error).message}`);
+      }
+    }
+
+    return updated;
+  }
+
+  async rejectDispute(disputeId: string, resolverId: string, reason: string) {
+    const dispute = await this.prisma.soukDispute.findUnique({
+      where: { id: disputeId },
+    });
+    if (!dispute) throw new NotFoundException(`Dispute ${disputeId} not found`);
+    if (dispute.status !== 'OPEN') {
+      throw new ForbiddenException('Dispute already resolved');
+    }
+
+    return this.prisma.soukDispute.update({
+      where: { id: disputeId },
+      data: {
+        status: 'REJECTED',
+        resolvedAt: new Date(),
+        resolvedById: resolverId,
+        resolution: reason,
+      },
+    });
+  }
+
+  private trustTier(score: number): string {
+    if (score >= 400) return 'GOLD';
+    if (score >= 200) return 'SILVER';
+    if (score >= 100) return 'BRONZE';
+    return 'NEW';
   }
 
   // ─────────────── Notification helpers ───────────────

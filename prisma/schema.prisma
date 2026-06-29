@@ -78,8 +78,30 @@ model GlobalUser {
   tokenWallet     TokenWallet?
   reportsMade     EcosystemSharedReport[] @relation("ReporterRelation")
   reportsReceived EcosystemSharedReport[] @relation("OffenderRelation")
+  pushDevices     PushDeviceToken[]
 
   @@index([trustScore])
+  @@schema("core")
+}
+
+/// FCM push-notification device tokens. Cross-tenant: a user may have
+/// tokens for multiple devices/apps. The `platform` field segments
+/// web vs. mobile for payload optimisation.
+model PushDeviceToken {
+  id          String   @id @default(uuid())
+  userId      String   // FK → core.GlobalUser
+  token       String   @unique
+  platform    String   @db.VarChar(20)  // "web" | "android" | "ios"
+  appSlug     String?  @db.VarChar(40)  // tenant subdomain, nullable for global
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user GlobalUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([appSlug])
+  @@map("push_device_tokens")
   @@schema("core")
 }
 
@@ -436,6 +458,7 @@ model SoukOffer {
   listing      SoukListing      @relation(fields: [listingId], references: [id])
   handover     SoukHandover?
   ratings      SoukRating[]
+  disputes     SoukDispute[]
   safeMeetSpot SoukSafeMeetSpot? @relation(fields: [safeMeetSpotId], references: [id])
 
   @@index([listingId])
@@ -565,6 +588,55 @@ enum SoukOfferStatus {
   HANDOVER_PENDING
   CONFIRMED
   CLOSED
+  CANCELLED
 
+  @@schema("tenant_soukelkanto")
+}
+
+enum SoukDisputeReason {
+  ITEM_NOT_AS_DESCRIBED
+  ITEM_DEFECTIVE
+  NO_SHOW
+  PAYMENT_ISSUE
+  COUNTERFEIT
+  SELLER_BACKED_OUT
+  BUYER_BACKED_OUT
+  SAFETY_CONCERN
+  OTHER
+
+  @@schema("tenant_soukelkanto")
+}
+
+enum SoukDisputeStatus {
+  OPEN
+  RESOLVED
+  REJECTED
+
+  @@schema("tenant_soukelkanto")
+}
+
+model SoukDispute {
+  id          String           @id @default(uuid())
+  offerId     String
+  filedById   String
+  againstId   String
+  reason      SoukDisputeReason
+  description String?           @db.Text
+  evidenceR2Key String?
+  status      SoukDisputeStatus @default(OPEN)
+  resolvedAt  DateTime?
+  resolvedById String?
+  resolution  String?           @db.Text
+  reportRowId String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  offer SoukOffer @relation(fields: [offerId], references: [id])
+
+  @@unique([offerId]) // one OPEN dispute per offer
+  @@index([filedById])
+  @@index([againstId])
+  @@index([status])
+  @@map("disputes")
   @@schema("tenant_soukelkanto")
 }

@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import axios from 'axios';
+import { WahaClient } from './waha.client';
 
 export interface OfferNotificationPayload {
   type: 'OFFER_CREATED' | 'OFFER_ACCEPTED' | 'OFFER_DECLINED' | 'OFFER_COUNTERED' | 'OFFER_WITHDRAWN';
@@ -20,51 +20,34 @@ export interface OfferNotificationPayload {
  * Falls back silently to logging on transient errors so business logic
  * is never blocked by a flaky WhatsApp connection.
  *
- * Requires env vars:
- *   WAHA_BASE_URL  - e.g. https://waha.xee.run.place
- *   WAHA_API_KEY   - API key for the WAHA instance
- *   WAHA_SESSION   - session name (default: "default")
+ * Delegates HTTP/phone logic to the shared {@link WahaClient}.
  */
 @Injectable()
 export class WahaNotificationService {
   private readonly logger = new Logger(WahaNotificationService.name);
+  private readonly waha: WahaClient;
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(config: ConfigService) {
+    this.waha = new WahaClient(config);
+  }
 
   async sendOfferNotification(payload: OfferNotificationPayload): Promise<void> {
-    const baseUrl = this.config.get<string>('waha.baseUrl');
-    const apiKey = this.config.get<string>('waha.apiKey');
-    const session = this.config.get<string>('waha.session') ?? 'default';
-
-    if (!baseUrl || !apiKey) {
+    if (!this.waha.isAvailable()) {
       this.logger.debug(
-        `WAHA not configured — skipping ${payload.type} notification to ${this.maskPhone(payload.recipientPhone)}`,
+        `WAHA not configured — skipping ${payload.type} notification to ${this.waha.maskPhone(payload.recipientPhone)}`,
       );
       return;
     }
 
-    const chatId = this.toChatId(payload.recipientPhone);
     const text = this.buildMessage(payload);
-
-    try {
-      await axios.post(
-        `${baseUrl}/api/sendText`,
-        { session, chatId, text },
-        {
-          headers: {
-            'X-Api-Key': apiKey,
-            'Content-Type': 'application/json',
-          },
-          timeout: 10_000,
-        },
-      );
+    const ok = await this.waha.sendText(payload.recipientPhone, text);
+    if (ok) {
       this.logger.log(
-        `${payload.type} notification sent via WAHA to ${this.maskPhone(payload.recipientPhone)}`,
+        `${payload.type} notification sent via WAHA to ${this.waha.maskPhone(payload.recipientPhone)}`,
       );
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+    } else {
       this.logger.error(
-        `WAHA notification failed (${payload.type}) for ${this.maskPhone(payload.recipientPhone)}: ${msg}`,
+        `WAHA notification failed (${payload.type}) for ${this.waha.maskPhone(payload.recipientPhone)}`,
       );
     }
   }
@@ -94,15 +77,5 @@ export class WahaNotificationService {
       default:
         return `🔔 إشعار من Souk ElKanto regarding "${title}".`;
     }
-  }
-
-  private toChatId(phoneNumber: string): string {
-    const digits = phoneNumber.replace(/\D/g, '');
-    return `${digits}@c.us`;
-  }
-
-  private maskPhone(phoneNumber: string): string {
-    if (phoneNumber.length <= 4) return '****';
-    return `${phoneNumber.slice(0, 3)}****${phoneNumber.slice(-2)}`;
   }
 }

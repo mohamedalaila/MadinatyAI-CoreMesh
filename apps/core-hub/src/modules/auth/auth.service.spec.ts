@@ -6,6 +6,7 @@ import { Role } from '@prisma/client';
 import { PrismaService } from '@madinatyai/prisma';
 import { AuthService } from './auth.service';
 import { OtpService } from './otp.service';
+import { JtiDenyListService } from './jti-deny-list.service';
 
 const makePrisma = () => ({
   globalUser: {
@@ -42,6 +43,7 @@ describe('AuthService', () => {
         { provide: JwtService, useValue: makeJwt() },
         { provide: OtpService, useValue: otp },
         { provide: ConfigService, useValue: makeConfig() },
+        JtiDenyListService,
       ],
     }).compile();
     service = module.get(AuthService);
@@ -84,21 +86,74 @@ describe('AuthService', () => {
   });
 
   describe('verifyOtp', () => {
-    it('returns a token + user on success', async () => {
-      prisma.globalUser.findUnique.mockResolvedValue({
-        id: 'u1',
-        phoneNumber: '+201001234567',
-        role: Role.USER,
-      });
+    it('returns a token + full profile projection on success', async () => {
+      // First call: minimal lookup by phoneNumber (for JWT issuance).
+      // Second call: full profile load by id (for the response body).
+      prisma.globalUser.findUnique
+        .mockResolvedValueOnce({
+          id: 'u1',
+          phoneNumber: '+201001234567',
+          role: Role.USER,
+        })
+        .mockResolvedValueOnce({
+          id: 'u1',
+          phoneNumber: '+201001234567',
+          role: Role.USER,
+          isVerified: true,
+          trustScore: 50,
+          metadata: { fullName: 'Ahmed Ali', gender: 'MALE' },
+          kyc: null,
+          createdAt: new Date('2025-01-01T00:00:00.000Z'),
+        });
 
       const result = await service.verifyOtp('+201001234567', '482915');
 
       expect(otp.verify).toHaveBeenCalledWith('+201001234567', '482915');
       expect(result.token).toBe('signed.jwt.value');
-      expect(result.user).toEqual({
+      // Pre-Phase A — verifyOtp now returns the full profile, not just id/phone/role.
+      expect(result.user).toMatchObject({
         id: 'u1',
         phoneNumber: '+201001234567',
         role: Role.USER,
+        isVerified: true,
+        trustScore: 50,
+        fullName: 'Ahmed Ali',
+        gender: 'MALE',
+        kyc: null,
+      });
+    });
+
+    it('throws 404 when the user was deleted between register and verify', async () => {
+      prisma.globalUser.findUnique.mockResolvedValue(null);
+      await expect(service.verifyOtp('+201001234567', '482915')).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('me', () => {
+    it('returns the full profile projection', async () => {
+      prisma.globalUser.findUnique.mockResolvedValue({
+        id: 'u1',
+        phoneNumber: '+201001234567',
+        role: Role.USER,
+        isVerified: true,
+        trustScore: 80,
+        metadata: { fullName: 'Sara Hassan', gender: 'FEMALE', madinatyGroup: 'G1' },
+        kyc: { status: 'APPROVED', reviewedAt: new Date('2025-06-01T00:00:00.000Z') },
+        createdAt: new Date('2025-01-01T00:00:00.000Z'),
+      });
+
+      const result = await service.me('u1');
+
+      expect(result).toMatchObject({
+        id: 'u1',
+        phoneNumber: '+201001234567',
+        role: Role.USER,
+        isVerified: true,
+        trustScore: 80,
+        fullName: 'Sara Hassan',
+        gender: 'FEMALE',
+        madinatyGroup: 'G1',
+        kyc: { status: 'APPROVED' },
       });
     });
   });

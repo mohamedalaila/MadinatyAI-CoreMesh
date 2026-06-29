@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { PrismaModule } from '@madinatyai/prisma';
 import type { NotificationChannel } from './notification-channel.interface';
 import { NOTIFICATION_CHANNELS } from './notification-channel.interface';
 import { WahaNotificationService } from './waha-notification.service';
@@ -7,6 +8,7 @@ import { FcmChannel } from './fcm.channel';
 import { NotificationDispatcher } from './notification-dispatcher.service';
 
 @Module({
+  imports: [PrismaModule],
   providers: [
     WahaNotificationService,
     WhatsAppChannel,

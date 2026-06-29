@@ -11,6 +11,28 @@ export interface AuthenticatedUser {
 }
 
 /**
+ * Full profile projection returned by `/auth/me` and `/auth/verify-otp`.
+ *
+ * Extends the minimal {@link AuthenticatedUser} with flattened `metadata`
+ * fields, KYC status, trust score, and timestamps so clients can hydrate
+ * their entire user state from a single response without a follow-up `/me`.
+ */
+export interface UserProfile extends AuthenticatedUser {
+  isVerified: boolean;
+  trustScore: number;
+  metadata: unknown;
+  fullName?: string;
+  gender?: string;
+  birthdate?: string;
+  address?: string;
+  madinatyGroup?: string;
+  buildingNo?: string;
+  aptNo?: string;
+  kyc: { status: string; reviewedAt: Date | null } | null;
+  createdAt: Date;
+}
+
+/**
  * JWT payload contract. Matches what {@link AuthService.issueToken} signs.
  * `sub` is the GlobalUser.id (standard JWT subject claim).
  *

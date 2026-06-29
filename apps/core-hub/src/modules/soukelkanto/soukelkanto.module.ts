@@ -11,12 +11,14 @@ import { SoukAiSuggestService } from './ai/ai-suggest.service';
 import { ListingsController } from './listings/listings.controller';
 import { OffersController } from './offers/offers.controller';
 import { HandoverController } from './handover/handover.controller';
+import { DisputesController } from './disputes/disputes.controller';
 import { RatingsController } from './ratings/ratings.controller';
 import { FavoritesController } from './favorites/favorites.controller';
 import { CategoriesController } from './categories/categories.controller';
 import { SafeSpotsController } from './safe-spots/safe-spots.controller';
 import { HealthController } from './health/health.controller';
 import { SoukAiSuggestionsController } from './ai/ai-suggestions.controller';
+import { ContactUsController } from './contact-us/contact-us.controller';
 
 /**
  * Souk ElKanto tenant module — peer-to-peer second-hand marketplace.
@@ -31,12 +33,14 @@ import { SoukAiSuggestionsController } from './ai/ai-suggestions.controller';
     ListingsController,
     OffersController,
     HandoverController,
+    DisputesController,
     RatingsController,
     FavoritesController,
     CategoriesController,
     SafeSpotsController,
     HealthController,
     SoukAiSuggestionsController,
+    ContactUsController,
   ],
 })
 export class SoukElKantoModule {}

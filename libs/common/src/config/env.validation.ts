@@ -92,6 +92,17 @@ export const envSchema = z.object({
   WAHA_BASE_URL: z.string().optional().default(''),
   WAHA_API_KEY: z.string().optional().default(''),
   WAHA_SESSION: z.string().optional().default('default'),
+
+  // ── FCM (Firebase Cloud Messaging) ───────────────────────────
+  // Base64-encoded service account JSON for firebase-admin.
+  // Generate: base64 -w 0 service-account.json
+  // Leave blank to disable push notifications (FcmChannel returns isAvailable=false).
+  FCM_SERVICE_ACCOUNT_JSON: z.string().optional().default(''),
+
+  // ── Souk ElKanto Contact-Us ──────────────────────────────────
+  // Phone number to receive Contact-Us messages via WAHA.
+  // Leave blank to disable the feature.
+  SOUK_SUPPORT_PHONE: z.string().optional().default(''),
 });
 
 export type Env = z.infer<typeof envSchema>;

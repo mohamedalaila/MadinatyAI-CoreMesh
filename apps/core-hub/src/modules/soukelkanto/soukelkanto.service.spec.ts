@@ -43,6 +43,12 @@ const mockPrisma = () => {
     soukSafeMeetSpot: {
       findMany: jest.fn(),
     },
+    soukDispute: {
+      create: jest.fn(),
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      update: jest.fn(),
+    },
     globalUser: {
       findUnique: jest.fn(),
     },
@@ -82,9 +88,10 @@ const mockWaha = () => ({
 describe('SoukElKantoService', () => {
   let service: SoukElKantoService;
   let prisma: ReturnType<typeof mockPrisma>;
+  let testingModule: TestingModule;
 
   beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
+    testingModule = await Test.createTestingModule({
       providers: [
         SoukElKantoService,
         { provide: PrismaService, useFactory: mockPrisma },
@@ -97,8 +104,8 @@ describe('SoukElKantoService', () => {
       ],
     }).compile();
 
-    service = module.get(SoukElKantoService);
-    prisma = module.get(PrismaService) as unknown as ReturnType<typeof mockPrisma>;
+    service = testingModule.get(SoukElKantoService);
+    prisma = testingModule.get(PrismaService) as unknown as ReturnType<typeof mockPrisma>;
   });
 
   describe('createListing', () => {
@@ -203,6 +210,200 @@ describe('SoukElKantoService', () => {
       expect(cats.length).toBe(Object.keys(SoukCategory).length);
       expect(cats[0]).toHaveProperty('labelEn');
       expect(cats[0]).toHaveProperty('labelAr');
+    });
+  });
+
+  // ── Phase B: Contact reveal, Cancel, Disputes ──────────────────────────
+
+  describe('revealContact', () => {
+    const mockOffer = {
+      id: 'o1',
+      buyerId: 'b1',
+      sellerId: 's1',
+      status: 'ACCEPTED',
+      listing: { title: 'IKEA Crib' },
+    };
+    const mockSeller = {
+      id: 's1',
+      phoneNumber: '+201001234567',
+      trustScore: 150,
+      metadata: { fullName: 'Sara Hassan' },
+    };
+
+    it('should reveal counterpart contact when caller is buyer and offer is ACCEPTED', async () => {
+      prisma.soukOffer.findUnique.mockResolvedValue(mockOffer);
+      prisma.globalUser.findUnique.mockResolvedValue(mockSeller);
+
+      const result = await service.revealContact('o1', 'b1');
+      expect(result.fullName).toBe('Sara Hassan');
+      expect(result.phoneNumber).toBe('+201001234567');
+      expect(result.waMeLink).toContain('wa.me/201001234567');
+      expect(result.trustTier).toBe('BRONZE');
+    });
+
+    it('should throw ForbiddenException when caller is not a party', async () => {
+      prisma.soukOffer.findUnique.mockResolvedValue(mockOffer);
+      await expect(service.revealContact('o1', 'random-user')).rejects.toThrow(
+        'Not a party to this offer',
+      );
+    });
+
+    it('should throw ForbiddenException when offer status is PENDING', async () => {
+      prisma.soukOffer.findUnique.mockResolvedValue({ ...mockOffer, status: 'PENDING' });
+      await expect(service.revealContact('o1', 'b1')).rejects.toThrow(
+        'CONTACT_REVEAL_NOT_ALLOWED',
+      );
+    });
+
+    it('should allow reveal when offer is HANDOVER_PENDING', async () => {
+      prisma.soukOffer.findUnique.mockResolvedValue({ ...mockOffer, status: 'HANDOVER_PENDING' });
+      prisma.globalUser.findUnique.mockResolvedValue(mockSeller);
+      const result = await service.revealContact('o1', 'b1');
+      expect(result.phoneNumber).toBe('+201001234567');
+    });
+  });
+
+  describe('cancelOffer', () => {
+    const mockOffer = {
+      id: 'o1',
+      buyerId: 'b1',
+      sellerId: 's1',
+      listingId: 'l1',
+      status: 'ACCEPTED',
+      amount: 1500,
+      tokenHoldAmount: 50,
+      listing: { id: 'l1', title: 'Crib', status: 'RESERVED' },
+    };
+
+    it('should cancel an ACCEPTED offer and revert listing to ACTIVE', async () => {
+      prisma.soukOffer.findUnique.mockResolvedValue(mockOffer);
+      prisma.soukOffer.update.mockResolvedValue({ id: 'o1', status: 'CANCELLED' });
+      prisma.soukListing.update.mockResolvedValue({ id: 'l1', status: 'ACTIVE' });
+
+      const result = await service.cancelOffer('o1', 'b1', 'no_show');
+      expect(result.status).toBe('CANCELLED');
+      expect(prisma.soukListing.update).toHaveBeenCalledWith({
+        where: { id: 'l1' },
+        data: { status: 'ACTIVE' },
+      });
+    });
+
+    it('should throw ForbiddenException when caller is not a party', async () => {
+      prisma.soukOffer.findUnique.mockResolvedValue(mockOffer);
+      await expect(service.cancelOffer('o1', 'random', 'reason')).rejects.toThrow(
+        'Not a party to this offer',
+      );
+    });
+
+    it('should throw ForbiddenException when offer is CONFIRMED (not cancellable)', async () => {
+      prisma.soukOffer.findUnique.mockResolvedValue({ ...mockOffer, status: 'CONFIRMED' });
+      await expect(service.cancelOffer('o1', 'b1', 'reason')).rejects.toThrow(
+        'OFFER_NOT_CANCELLABLE',
+      );
+    });
+  });
+
+  describe('createDispute', () => {
+    const mockOffer = {
+      id: 'o1',
+      buyerId: 'b1',
+      sellerId: 's1',
+      status: 'ACCEPTED',
+      amount: 1500,
+      handover: null,
+      disputes: [],
+    };
+
+    it('should create a dispute when caller is a party and offer is ACCEPTED', async () => {
+      prisma.soukOffer.findUnique.mockResolvedValue(mockOffer);
+      prisma.soukDispute.create.mockResolvedValue({
+        id: 'd1',
+        offerId: 'o1',
+        filedById: 'b1',
+        againstId: 's1',
+        reason: 'NO_SHOW',
+        status: 'OPEN',
+      });
+
+      const result = await service.createDispute('b1', {
+        offerId: 'o1',
+        reason: 'NO_SHOW',
+        description: 'Seller did not show up',
+      });
+      expect(result.id).toBe('d1');
+      expect(result.reason).toBe('NO_SHOW');
+      expect(prisma.soukDispute.create).toHaveBeenCalledWith({
+        data: {
+          offerId: 'o1',
+          filedById: 'b1',
+          againstId: 's1',
+          reason: 'NO_SHOW',
+          description: 'Seller did not show up',
+          evidenceR2Key: undefined,
+        },
+      });
+    });
+
+    it('should throw ForbiddenException when caller is not a party', async () => {
+      prisma.soukOffer.findUnique.mockResolvedValue(mockOffer);
+      await expect(
+        service.createDispute('random', { offerId: 'o1', reason: 'OTHER' }),
+      ).rejects.toThrow('Not a party to this offer');
+    });
+
+    it('should throw DISPUTE_ALREADY_OPEN when an open dispute exists', async () => {
+      prisma.soukOffer.findUnique.mockResolvedValue({
+        ...mockOffer,
+        disputes: [{ id: 'd-old', status: 'OPEN' }],
+      });
+      await expect(
+        service.createDispute('b1', { offerId: 'o1', reason: 'OTHER' }),
+      ).rejects.toThrow('DISPUTE_ALREADY_OPEN');
+    });
+
+    it('should throw DISPUTE_NOT_ALLOWED when offer is PENDING', async () => {
+      prisma.soukOffer.findUnique.mockResolvedValue({
+        ...mockOffer,
+        status: 'PENDING',
+      });
+      await expect(
+        service.createDispute('b1', { offerId: 'o1', reason: 'OTHER' }),
+      ).rejects.toThrow('DISPUTE_NOT_ALLOWED');
+    });
+  });
+
+  describe('resolveDispute', () => {
+    it('should resolve an OPEN dispute and optionally file a report', async () => {
+      prisma.soukDispute.findUnique.mockResolvedValue({
+        id: 'd1',
+        status: 'OPEN',
+        filedById: 'b1',
+        againstId: 's1',
+        reason: 'COUNTERFEIT',
+        offer: { id: 'o1' },
+      });
+      prisma.soukDispute.update.mockResolvedValue({ id: 'd1', status: 'RESOLVED' });
+      const mockReportsService = testingModule.get(ReportsService);
+      (mockReportsService.file as jest.Mock).mockResolvedValue({
+        report: { id: 'r1' },
+        trust: { score: 90 },
+      });
+
+      const result = await service.resolveDispute('d1', 'admin1', 'Resolved: refund', true);
+      expect(result.status).toBe('RESOLVED');
+      expect(mockReportsService.file).toHaveBeenCalledWith(
+        expect.objectContaining({ offenderId: 's1', incidentType: 'FRAUD' }),
+      );
+    });
+
+    it('should throw ForbiddenException when dispute is already resolved', async () => {
+      prisma.soukDispute.findUnique.mockResolvedValue({
+        id: 'd1',
+        status: 'RESOLVED',
+      });
+      await expect(
+        service.resolveDispute('d1', 'admin1', 'done'),
+      ).rejects.toThrow('Dispute already resolved');
     });
   });
 });

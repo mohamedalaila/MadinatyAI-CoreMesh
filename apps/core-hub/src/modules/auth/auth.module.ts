@@ -4,6 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { PrismaModule } from '@madinatyai/prisma';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { DeviceTokenService } from './device-token.service';
 import { OtpService } from './otp.service';
 import { JtiDenyListService } from './jti-deny-list.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -43,6 +44,7 @@ import { WahaOtpDeliveryProvider } from './providers/waha-otp.provider';
   controllers: [AuthController],
   providers: [
     AuthService,
+    DeviceTokenService,
     OtpService,
     JtiDenyListService,
     JwtAuthGuard,
@@ -72,6 +74,6 @@ import { WahaOtpDeliveryProvider } from './providers/waha-otp.provider';
       },
     },
   ],
-  exports: [AuthService, JwtAuthGuard, JtiDenyListService, JwtModule],
+  exports: [AuthService, DeviceTokenService, JwtAuthGuard, JtiDenyListService, JwtModule],
 })
 export class AuthModule {}
